@@ -34,6 +34,12 @@ describe('parseEnvText', () => {
     expect(vars.size).toBe(5);
   });
 
+  it('an empty value followed by a comment is empty, not the comment', () => {
+    const vars = parseEnvText('AIGRADER_MODEL=                    # blank = default\nCODEX_PATH=# none');
+    expect(vars.get('AIGRADER_MODEL')).toBe('');
+    expect(vars.get('CODEX_PATH')).toBe('');
+  });
+
   it('keeps a # inside a quoted value', () => {
     expect(parseEnvText('X="a # b"').get('X')).toBe('a # b');
   });

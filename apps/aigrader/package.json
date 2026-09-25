@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@aigrader/canvas": "workspace:*",
+    "@aigrader/codex": "workspace:*",
     "@aigrader/engine": "workspace:*",
     "@aigrader/shared": "workspace:*",
     "express": "^4.21.0",

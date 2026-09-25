@@ -55,6 +55,8 @@ export interface EngineRuntimeDeps {
 /** Everything the local server needs to hold onto for one machine. */
 export interface EngineRuntime {
   engine: GradingEngine;
+  /** The live engine config (the server fills in the resolved model). */
+  config: EngineConfig;
   registry: RunRegistry;
   gates: CanvasGateRegistry;
   clients: CourseClientFactory;
@@ -80,7 +82,7 @@ export function createEngine(deps: EngineRuntimeDeps): EngineRuntime {
     generator: deps.generator,
     warn: deps.warn,
   });
-  return { engine, registry, gates, clients };
+  return { engine, config: deps.config, registry, gates, clients };
 }
 
 export interface EngineAppOptions {
@@ -126,7 +128,17 @@ export function createEngineApp(options: EngineAppOptions): Express {
       approvalCapability: options.approvalCapability,
     }),
   );
-  app.use('/alignment', createAlignmentRouter({ clients: runtime.clients, llm: options.llm }));
+  app.use(
+    '/alignment',
+    createAlignmentRouter({
+      clients: runtime.clients,
+      llm: options.llm,
+      model: () => ({
+        model: process.env.AIGRADER_ALIGNMENT_MODEL ?? runtime.config.model,
+        reasoningEffort: runtime.config.reasoningEffort,
+      }),
+    }),
+  );
   return app;
 }
 

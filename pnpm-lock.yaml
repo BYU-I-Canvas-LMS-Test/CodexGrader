@@ -13,6 +13,9 @@ importers:
       '@aigrader/canvas':
         specifier: workspace:*
         version: link:../../packages/canvas
+      '@aigrader/codex':
+        specifier: workspace:*
+        version: link:../../packages/codex
       '@aigrader/engine':
         specifier: workspace:*
         version: link:../../packages/engine
@@ -99,6 +102,22 @@ importers:
       zod:
         specifier: ^3.25.0
         version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.3
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@24.13.3)(tsx@4.23.1)
+
+  packages/codex:
+    dependencies:
+      '@aigrader/engine':
+        specifier: workspace:*
+        version: link:../engine
     devDependencies:
       '@types/node':
         specifier: ^24.0.0

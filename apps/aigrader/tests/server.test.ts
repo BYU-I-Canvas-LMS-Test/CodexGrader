@@ -7,10 +7,13 @@
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { createServer, request, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LOCAL_HOST_GLOBAL } from '@aigrader/shared';
+import { createCodexBackend } from '@aigrader/codex';
 import { AlreadyRunningError, connectControl } from '../src/control.js';
+import { unavailableLlm } from '../src/llm.js';
 import { resolvePaths, type AigraderPaths } from '../src/paths.js';
 import { startServer, type RunningServer, type StartServerOptions } from '../src/server.js';
 
@@ -47,11 +50,14 @@ async function start(overrides: Partial<StartServerOptions> = {}): Promise<Runni
     openBrowser: (url) => opened.push(url),
     sleepInhibitor: { set: () => {}, stop: () => {}, active: false },
     log: () => {},
+    llm: unavailableLlm(), // hermetic: never probe the real Codex here
     ...overrides,
   });
   running.push(server);
   return server;
 }
+
+const FAKE_CODEX = fileURLToPath(new URL('../../../packages/codex/tests/fake-codex/fake-codex.mjs', import.meta.url));
 
 function get(port: number, path: string, hostHeader: string): Promise<{ status: number; body: string; location?: string }> {
   return new Promise((resolve, reject) => {
@@ -188,4 +194,39 @@ describe('local server', () => {
     client.close();
     expect(await server.stopped).toBe('requested');
   });
+});
+
+describe('with the Codex backend (FakeCodex)', () => {
+  it('resolves the grading model from the account catalog and reports Codex + usage in status', async () => {
+    process.env.FAKE_CODEX_DIR = join(home, 'fake');
+    process.env.FAKE_CODEX_USAGE = JSON.stringify({ primary: 5, secondary: 66 });
+    writeFileSync(
+      paths.envFile,
+      `CANVAS_BASE_URL=https://byui.instructure.com
+CANVAS_API_TOKEN=${TOKEN}
+AIGRADER_MODEL=gpt-6-astra
+`,
+    );
+    const logs: string[] = [];
+    const codex = createCodexBackend({
+      command: { command: process.execPath, prefixArgs: [FAKE_CODEX] },
+      stateDir: join(home, 'state', 'codex'),
+    });
+    const server = await start({ llm: undefined, codex, log: (m) => logs.push(m) });
+    await codex.ready;
+    for (let i = 0; i < 50 && server.runtime.config.model !== 'gpt-fake-sol'; i++) await new Promise((r) => setTimeout(r, 10));
+    // gpt-6-astra isn't on this account → the account default, with a note.
+    expect(server.runtime.config.model).toBe('gpt-fake-sol');
+    expect(logs.some((l) => l.includes('AIGRADER_MODEL=gpt-6-astra is not available'))).toBe(true);
+
+    const client = await connectControl({ endpoint: paths.controlEndpoint, keyFile: paths.controlKeyFile });
+    const status = await client.request('status');
+    client.close();
+    expect(status).toMatchObject({
+      model: 'gpt-fake-sol',
+      codex: { state: 'ready', version: '0.155.0-fake', usage: { windows: [{ usedPercent: 5 }, { usedPercent: 66 }] } },
+    });
+    delete process.env.FAKE_CODEX_DIR;
+    delete process.env.FAKE_CODEX_USAGE;
+  }, 30_000);
 });

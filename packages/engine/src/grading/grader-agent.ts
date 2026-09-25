@@ -37,6 +37,7 @@ import type { GradingLlm, LlmResult } from '../llm/structured-client.js';
 import type { GraderOutput } from '../llm/response-schemas.js';
 import type { RunSession } from '../coordinator/run-session.js';
 import { pauseSignalOf, type PauseSignal } from '../coordinator/pause.js';
+import { postGradeWarnings, scoreFromTotal } from './post-checks.js';
 import { assembleSubmission, isExcelFilename } from './submission-assembly.js';
 import type { SubmissionFileInput, VisionImagePart } from './submission-assembly.js';
 import { isImageAttachment } from './vision-routing.js';
@@ -245,6 +246,13 @@ export class GraderAgent {
       );
 
       const draft = toDraft(result.output, doc.rubricSnapshot, doc.pointsPossible);
+      const reviewWarnings = postGradeWarnings({
+        submissionText: content.text,
+        gradingKeyText: materials.keyText ?? null,
+        feedbackTexts: [draft.assignmentFeedback, ...draft.rubrics.map((r) => r.ratingFeedback ?? '')],
+        score: scoreFromTotal(draft.totalPoints),
+        pointsPossible: doc.pointsPossible,
+      });
       session.updateGrade(canvasUserId, (g) => {
         g.aiDraft = draft;
         // A kept faculty edit now predates this draft (re-run) — the reviewer
@@ -252,6 +260,9 @@ export class GraderAgent {
         if (g.facultyEdited != null) g.staleEdit = true;
         g.errorKind = undefined;
         if (scaleNote != null) g.extractionWarnings.push(scaleNote);
+        for (const w of reviewWarnings) {
+          if (!g.extractionWarnings.includes(w)) g.extractionWarnings.push(w);
+        }
         g.llm = {
           inputTokens: result.stats.promptTokens ?? 0,
           outputTokens: result.stats.outputTokens ?? 0,

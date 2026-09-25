@@ -7,6 +7,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { unavailableLlm } from '../src/llm.js';
 import { resolvePaths } from '../src/paths.js';
 import { startServer, type RunningServer } from '../src/server.js';
 import { resolveWebDir } from '../src/web.js';
@@ -27,6 +28,7 @@ describe.skipIf(!built)('review UI through the real Next build', () => {
       version: 'e2e',
       port: 0,
       openBrowser: (url) => opened.push(url),
+      llm: unavailableLlm(),
       sleepInhibitor: { set: () => {}, stop: () => {}, active: false },
       log: () => {},
     });

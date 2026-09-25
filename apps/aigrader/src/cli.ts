@@ -220,6 +220,25 @@ async function status(paths: AigraderPaths, io: CliIo): Promise<number> {
   };
   io.out(`AI Grader ${String(res.version)} is running at ${String(res.origin)}`);
   io.out(`  Open runs: ${activity.liveRuns}${activity.busy ? ' (grading now)' : ''}`);
+  const codex = res.codex as {
+    state: string;
+    message: string | null;
+    version: string | null;
+    source: string | null;
+    usage: { windows: Array<{ usedPercent: number; windowMinutes: number | null }> } | null;
+  } | null;
+  if (codex) {
+    if (codex.state === 'ready') {
+      const usage = (codex.usage?.windows ?? [])
+        .map((w) => `${Math.round(w.usedPercent)}% of ${w.windowMinutes && w.windowMinutes >= 8640 ? 'weekly' : `${Math.round((w.windowMinutes ?? 0) / 60)}-hour`}`)
+        .join(', ');
+      io.out(`  Codex: ${codex.version} (${codex.source}), grading model ${String(res.model ?? 'default')}${usage ? `; usage ${usage}` : ''}`);
+    } else if (codex.state === 'starting') {
+      io.out('  Codex: checking…');
+    } else {
+      io.out(`  ! Codex: ${codex.message ?? codex.state}`);
+    }
+  }
   for (const instance of config.instances) {
     io.out(`  Canvas: ${instance.baseUrl} (token ${instance.tokenHint ?? 'missing'})`);
   }

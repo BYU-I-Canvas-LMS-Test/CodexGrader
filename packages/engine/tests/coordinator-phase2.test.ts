@@ -558,3 +558,24 @@ describe('shutdown and pause recovery', () => {
     expect(doc.grades.every((g) => g.status === 'DRAFT')).toBe(true);
   });
 });
+
+describe('auto-resume timer', () => {
+  it('a reset months away does not fire at once (setTimeout overflow guard)', async () => {
+    harness = buildEngine({
+      canvas: twoStudentCanvas(),
+      modelCall: async () => {
+        throw new GradingCallError('limit', {
+          retryable: false,
+          kind: 'usage_limit',
+          // ~106 days after the test clock — beyond setTimeout's 24.8-day cap.
+          resetsAt: '2026-09-24T21:00:00.000Z',
+        });
+      },
+    });
+    const { runId } = await harness.engine.startRun(START);
+    await harness.engine.onIdle();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(harness.modelCalls).toHaveLength(2); // not re-queued in a loop
+    expect(harness.registry.get(runId)!.paused?.reason).toBe('usage_limit');
+  });
+});

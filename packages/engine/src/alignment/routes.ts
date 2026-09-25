@@ -148,6 +148,8 @@ export interface AlignmentRoutesDeps {
   review?: AlignmentReviewFn;
   /** Audit sink injection (tests). */
   auditFn?: typeof sharedAudit;
+  /** Model + effort for reviews, read per call (default: from env). */
+  model?: () => { model: string; reasoningEffort: string };
 }
 
 // ------------------------------------------------------------------ plumbing --
@@ -268,7 +270,7 @@ export function createAlignmentRouter(deps: AlignmentRoutesDeps): Router {
       if (!llm) {
         throw new Error('Alignment routes need an LLM client (or an injected review fn).');
       }
-      const { model, reasoningEffort } = alignmentModelFromEnv();
+      const { model, reasoningEffort } = (deps.model ?? alignmentModelFromEnv)();
       const { output } = await llm.reviewAlignment({
         systemPrompt: ALIGNMENT_SYSTEM_PROMPT,
         userMessage: buildAlignmentUserMessage(input),

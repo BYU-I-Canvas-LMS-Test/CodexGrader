@@ -21,10 +21,13 @@
 import { randomBytes } from 'node:crypto';
 import { rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { join } from 'node:path';
+import { createCodexBackend, type CodexBackend } from '@aigrader/codex';
 import {
   LocalProgressStore,
   SIGTERM_BUDGET_MS,
   StaticCredentialProvider,
+  StructuredGradingClient,
   createEngine,
   createEngineApp,
   engineConfigFromEnv,
@@ -38,7 +41,6 @@ import { openInBrowser, type BrowserOpener } from './browser.js';
 import { listenControl, type ControlRequest, type ControlResponse } from './control.js';
 import { EnvConfigLoader, type EnvConfig, type EnvSettings } from './env-config.js';
 import { FilePostLedger } from './ledger.js';
-import { unavailableLlm } from './llm.js';
 import { createLocalHost, type LocalHostImpl } from './local-host.js';
 import type { AigraderPaths } from './paths.js';
 import { createSleepInhibitor, type SleepInhibitor } from './sleep-inhibitor.js';
@@ -63,8 +65,11 @@ export interface StartServerOptions {
   version: string;
   /** Web handler factory; default: the built Next.js review UI. */
   web?: (ctx: { host: LocalHostImpl; origin: string; port: number }) => Promise<WebHandler>;
-  /** Model backend; default: the Phase 3 placeholder (never fakes a grade). */
+  /** Model backend override (tests). Default: Codex (packages/codex). */
   llm?: GradingLlm;
+  /** Codex backend override (tests: FakeCodex). Ignored when `llm` is given
+   * unless passed explicitly. */
+  codex?: CodexBackend | null;
   openBrowser?: BrowserOpener;
   sleepInhibitor?: SleepInhibitor;
   /** Overrides AIGRADER_UI_PORT / the default. 0 = any free port. */
@@ -85,6 +90,8 @@ export interface RunningServer {
   readonly host: LocalHostImpl;
   readonly runtime: EngineRuntime;
   readonly env: EnvConfigLoader;
+  /** The Codex backend (null when a test injected its own model). */
+  readonly codex: CodexBackend | null;
   /** Opens the review UI at `path` in the system browser (with a login token). */
   openReview(path?: string): void;
   stop(reason: string): Promise<void>;
@@ -135,7 +142,20 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     const ledger = new FilePostLedger(paths.ledgerDir);
     ledger.prune();
 
-    const llm = opts.llm ?? unavailableLlm();
+    // The grading model: one isolated `codex exec` per student, signed in
+    // as the teacher. Probing Codex happens in the background.
+    const codex: CodexBackend | null =
+      opts.codex !== undefined
+        ? opts.codex
+        : opts.llm
+          ? null
+          : createCodexBackend({
+              codexPath: env.current.settings.codexPath,
+              stateDir: join(paths.stateDir, 'codex'),
+              stopPercent: env.current.settings.quotaStopPercent,
+              log,
+            });
+    const llm = opts.llm ?? new StructuredGradingClient({ modelCall: codex!.modelCall });
     const runtime = createEngine({
       credentials,
       llm,
@@ -144,6 +164,13 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
       ledger,
       generator: `byui-ai-grader/${version}`,
       warn: log,
+    });
+    // Record the real model on every run: the teacher's choice if their plan
+    // has it, else the account's default.
+    void codex?.ready.then(() => {
+      const { model, note } = codex.resolveModel(env.current.settings.model);
+      runtime.config.model = model;
+      if (note) log(`[config] ${note}`);
     });
     const approvalCapability = randomBytes(32).toString('base64url');
     const engineApp = createEngineApp({ runtime, credentials, llm });
@@ -326,6 +353,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
       host,
       runtime,
       env,
+      codex,
       openReview,
       stop,
       stopped,
@@ -338,18 +366,23 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     throw err;
   }
 
-  function handleControl(request: ControlRequest): ControlResponse {
+  async function handleControl(request: ControlRequest): Promise<ControlResponse> {
     switch (request.op) {
       case 'hello':
         return { ok: true, version, pid: process.pid, ready, origin: ready ? origin : null };
       case 'status': {
         if (!ready || !running) return { ok: false, error: 'starting' };
         const config = running.env.current;
+        const codex = running.codex;
         return {
           ok: true,
           version,
           pid: process.pid,
           origin,
+          model: running.runtime.config.model || null,
+          codex: codex
+            ? { ...codex.status(), usage: await codex.usage().catch(() => null) }
+            : null,
           activity: running.runtime.engine.activity(),
           config: {
             file: config.file,

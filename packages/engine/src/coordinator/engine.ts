@@ -91,6 +91,9 @@ export interface RunStorePort {
   cleanup?(courseId: number, apiDomain?: string | null): Promise<void>;
 }
 
+/** The largest delay setTimeout honors (larger values fire at once). */
+const MAX_TIMER_MS = 2_147_483_647;
+
 /** How often one course's retention sweep may run from this process. */
 export const CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
@@ -1486,6 +1489,14 @@ export class GradingEngine {
     const existing = this.unpauseTimers.get(runId);
     if (existing) clearTimeout(existing);
     const delay = Math.max(0, Date.parse(untilIso) - this.now().getTime()) + 5_000;
+    // Node fires a timer IMMEDIATELY when its delay exceeds 2^31-1 ms (~24.8
+    // days) — for a far-off reset, wake at the cap and re-schedule.
+    if (delay > MAX_TIMER_MS) {
+      const hop = setTimeout(() => this.scheduleUnpause(runId, untilIso), MAX_TIMER_MS);
+      hop.unref?.();
+      this.unpauseTimers.set(runId, hop);
+      return;
+    }
     const timer = setTimeout(() => {
       this.unpauseTimers.delete(runId);
       void this.unpause(runId).catch((err: unknown) =>

@@ -13,6 +13,9 @@ access BYU-Idaho provides to faculty.
 - **Your data stays in Canvas.** Profiles, prep settings, and grading history
   live in a hidden, locked "AI Grader" folder inside each course, the same
   folder the earlier BYU-(A)I Grader used.
+- **Graded by your own Codex.** Each student is graded by a private, tool-less
+  Codex session signed in as you. Grading pauses on its own at 85% of a Codex
+  usage window (so you keep room for chat) and resumes when the window resets.
 
 ## Getting started (faculty)
 

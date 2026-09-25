@@ -27,6 +27,8 @@ export interface EnvSettings {
   maxWorkers?: number;
   uiPort?: number;
   codexPath?: string;
+  /** Pause grading at this % of any Codex usage window (default 85). */
+  quotaStopPercent?: number;
 }
 
 /** One configured Canvas instance, safe to show (no token). */
@@ -80,7 +82,9 @@ function unquote(value: string): string {
     // An unterminated quote keeps everything after the opening mark.
     return (end > 0 ? value.slice(1, end) : value.slice(1)).trim();
   }
-  // Unquoted: an inline comment starts at whitespace + '#'.
+  // Unquoted: an inline comment starts at whitespace + '#' — or right away
+  // for an empty value (`KEY=   # comment`; the whitespace was trimmed).
+  if (value.startsWith('#')) return '';
   const hash = value.search(/\s#/);
   return (hash >= 0 ? value.slice(0, hash) : value).trim();
 }
@@ -214,8 +218,8 @@ export function parseEnvConfig(text: string | null, file: string): EnvConfig {
   if (model) settings.model = model;
   const effort = vars.get('AIGRADER_REASONING_EFFORT')?.toLowerCase();
   if (effort) {
-    if (['minimal', 'low', 'medium', 'high', 'xhigh'].includes(effort)) settings.reasoningEffort = effort;
-    else problems.push('AIGRADER_REASONING_EFFORT must be low, medium, or high; using medium.');
+    if (['low', 'medium', 'high', 'xhigh', 'max'].includes(effort)) settings.reasoningEffort = effort;
+    else problems.push('AIGRADER_REASONING_EFFORT must be low, medium, high, xhigh, or max; using medium.');
   }
   const workers = intSetting(vars, 'AIGRADER_MAX_WORKERS', 1, 4, problems);
   if (workers !== undefined) settings.maxWorkers = workers;
@@ -223,6 +227,8 @@ export function parseEnvConfig(text: string | null, file: string): EnvConfig {
   if (port !== undefined) settings.uiPort = port;
   const codexPath = vars.get('CODEX_PATH');
   if (codexPath) settings.codexPath = codexPath;
+  const stop = intSetting(vars, 'AIGRADER_QUOTA_STOP_PERCENT', 50, 100, problems);
+  if (stop !== undefined) settings.quotaStopPercent = stop;
 
   return { file, exists: true, entries, instances, settings, problems };
 }
