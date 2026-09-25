@@ -1,0 +1,32 @@
+{
+  "name": "@aigrader/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aigrader/shared": "workspace:*",
+    "@aiden0z/pptx-renderer": "1.2.4",
+    "@fluentui/react-components": "^9.58.0",
+    "docx-preview": "0.3.5",
+    "highlight.js": "11.11.1",
+    "jszip": "3.10.1",
+    "next": "^16.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "server-only": "^0.0.1",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.0.0"
+  }
+}

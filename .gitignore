@@ -1,0 +1,22 @@
+# dependencies / builds
+node_modules/
+.next/
+dist/
+out/
+coverage/
+*.tsbuildinfo
+
+# env & secrets — a teacher's Canvas token lives in ~/.aigrader/.env, never here
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# misc
+.DS_Store
+Thumbs.db
+
+# local-only working notes (never published)
+CLAUDE.md
+docs/PLAN.md

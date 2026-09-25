@@ -1,0 +1,187 @@
+/* Launcher surfaces (home + course picker) — BYU-Idaho Brand Blue on the
+ * app's page background; tokens from globals.css. */
+
+.connect {
+  min-height: 100vh;
+  background:
+    radial-gradient(1100px 520px at 85% -8%, rgba(0, 110, 182, 0.08), transparent 62%),
+    var(--page-bg);
+  color: var(--ink-900);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.connect-nav {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  padding: 20px clamp(24px, 6vw, 72px);
+}
+.connect-nav .brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 700;
+  font-size: 22px;
+  color: var(--navy-900);
+  text-decoration: none;
+}
+.connect-nav .brand img {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: var(--blue-600);
+}
+
+.connect-card {
+  width: min(620px, calc(100vw - 48px));
+  margin: clamp(20px, 6vh, 56px) 24px 48px;
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: 18px;
+  padding: clamp(24px, 4vw, 40px);
+  box-shadow: 0 10px 40px rgba(11, 26, 51, 0.06);
+}
+.connect-card h1 {
+  font-size: 26px;
+  font-weight: 700;
+  margin: 0 0 8px;
+  color: var(--navy-900);
+}
+.connect-card .sub {
+  margin: 0 0 20px;
+  color: var(--ink-600);
+  line-height: 1.55;
+}
+
+.connect-help {
+  background: var(--blue-50);
+  border: 1px solid var(--blue-100);
+  border-radius: 12px;
+  padding: 14px 18px;
+  font-size: 14px;
+  color: var(--ink-700);
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+.connect-help ol {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+.connect-help code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: #fff;
+  border: 1px solid var(--blue-100);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+
+.connect-instance {
+  margin-top: 18px;
+}
+.connect-instance h2 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-500);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0 0 8px;
+}
+
+.course-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+  margin-bottom: 16px;
+}
+.course-option {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+  background: #fff;
+}
+.course-option:hover {
+  border-color: var(--blue-500);
+}
+.course-option.selected {
+  outline: 2px solid var(--blue-600);
+  border-color: var(--blue-600);
+  background: var(--blue-50);
+}
+.course-option .name {
+  font-weight: 600;
+  color: var(--ink-900);
+}
+.course-option .meta {
+  font-size: 13px;
+  color: var(--ink-500);
+}
+
+.connect-submit {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  background: var(--blue-600);
+  color: #fff;
+  font-weight: 600;
+  font-size: 15px;
+  border-radius: 10px;
+  padding: 12px 20px;
+}
+.connect-submit:hover:not(:disabled) {
+  background: var(--blue-700);
+}
+.connect-submit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.connect-loading,
+.connect-empty {
+  color: var(--ink-600);
+  line-height: 1.55;
+}
+.connect-empty {
+  background: var(--ink-50);
+  border: 1px dashed var(--ink-300);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.connect-status {
+  font-size: 14px;
+  color: var(--ink-600);
+  margin: 0 0 10px;
+}
+
+.connect-error {
+  margin-top: 16px;
+  color: var(--red-600);
+  background: var(--red-100);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 14px;
+}
+.connect-info {
+  margin-top: 16px;
+  color: var(--green-600);
+  background: var(--green-50);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 14px;
+}
+
+.connect-footer {
+  color: var(--ink-400);
+  font-size: 13px;
+  margin: 0 0 32px;
+}

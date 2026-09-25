@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "canvasCourseId": 4409,
+  "latest": {
+    "method": "ai",
+    "scannedAt": "2026-06-15T09:00:00+00:00",
+    "outcomes": {
+      "found": 6,
+      "aligned": 4
+    },
+    "rubrics": {
+      "found": 9,
+      "aligned": 5
+    },
+    "assignmentsScanned": 12,
+    "reviewed": 9,
+    "assignments": [
+      {
+        "canvasAssignmentId": 11824,
+        "assignmentName": "Budget Workbook",
+        "status": "reviewed",
+        "alignmentScore": 72,
+        "summary": "Rubric mostly matches the instructions."
+      },
+      {
+        "canvasAssignmentId": 11901,
+        "assignmentName": "Reflection 2",
+        "status": "skipped"
+      }
+    ],
+    "scanErrors": [
+      {
+        "assignment": "Final Project",
+        "message": "Rubric fetch failed"
+      }
+    ],
+    "alignmentScore": 68,
+    "issues": [
+      {
+        "severity": "high",
+        "assignment": "Budget Workbook",
+        "pairing": "rubric_outcome",
+        "title": "Outcome not measured",
+        "detail": "The linked outcome is not represented by any criterion.",
+        "suggestion": "Add a criterion that measures the outcome."
+      }
+    ]
+  },
+  "history": [],
+  "archive": [
+    {
+      "scannedAt": "2026-05-20T09:00:00+00:00",
+      "method": "heuristic",
+      "alignmentScore": 55,
+      "issueCount": 0,
+      "highSeverityCount": 0
+    }
+  ]
+}

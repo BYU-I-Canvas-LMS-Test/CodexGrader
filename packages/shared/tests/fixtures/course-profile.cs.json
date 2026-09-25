@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "courseProfile": {
+    "courseLevel": "100-200 (Introductory)",
+    "genEd": false,
+    "learningOutcomes": [
+      "Design efficient programs"
+    ],
+    "strongWorkDefinition": "Clear reasoning backed by evidence.",
+    "gradingPhilosophy": "Depth over perfection.",
+    "feedbackTone": "supportive_direct",
+    "studentAiPolicy": "not_set"
+  },
+  "writingExpectations": {
+    "grammarWeight": 50,
+    "organizationWeight": 50,
+    "citationWeight": 50,
+    "clarityWeight": 70
+  },
+  "gradingDefaults": {
+    "overallFeedbackLength": "short",
+    "rubricFeedbackLength": "medium",
+    "strictness": 80,
+    "evidenceExpectation": 70,
+    "missingWorkPenalty": 75,
+    "humanInTheLoop": true
+  },
+  "customPhrases": {
+    "vagueButClose": "You are close - tighten the claim.",
+    "praiseMostOften": "",
+    "correctMostOften": ""
+  },
+  "commonMistakes": [
+    "Missing citations"
+  ],
+  "canvasOutcomes": [
+    {
+      "id": "123",
+      "title": "Quantitative Reasoning",
+      "description": "Interpret and evaluate quantitative information."
+    }
+  ],
+  "assignmentOverrides": {
+    "11824": {
+      "strictness": 95,
+      "note": "raw JSON from the base C# app - round-trips untouched"
+    }
+  }
+}

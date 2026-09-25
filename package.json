@@ -1,0 +1,19 @@
+{
+  "name": "byui-ai-grader",
+  "private": true,
+  "description": "BYU-(A)I Grader — AI-assisted, rubric-aligned Canvas grading that faculty run on their own computer, driven by OpenAI Codex.",
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.30.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "scripts": {
+    "build": "pnpm -r --filter \"@aigrader/*\" build",
+    "typecheck": "pnpm -r --filter \"@aigrader/*\" typecheck",
+    "test": "pnpm -r --filter \"@aigrader/*\" test"
+  }
+}

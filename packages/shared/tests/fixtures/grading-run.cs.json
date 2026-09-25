@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "runId": "0f8fad5bd9cb469fa1656ea4d17fadf1",
+  "canvasCourseId": 4409,
+  "canvasApiDomain": "byupw.instructure.com",
+  "canvasAssignmentId": 11824,
+  "quizQuestionSnapshot": [],
+  "assignmentName": "Essay 1",
+  "pointsPossible": 20,
+  "assignmentDescriptionHtml": "<p>Write an essay.</p>",
+  "rubricSnapshot": [
+    {
+      "id": "_4692",
+      "description": "Thesis",
+      "points": 10,
+      "ratings": [
+        {
+          "id": "_1",
+          "description": "Full credit",
+          "points": 10
+        },
+        {
+          "id": "_2",
+          "description": "Partial credit",
+          "points": 5
+        }
+      ]
+    },
+    {
+      "id": "1745118159974",
+      "description": "Evidence",
+      "long_description": "Uses cited evidence throughout.",
+      "points": 10,
+      "learning_outcome_id": 987,
+      "ratings": []
+    }
+  ],
+  "modelName": "gpt-5.4",
+  "reasoningEffort": "medium",
+  "facultyCanvasUserId": 555,
+  "facultyName": "Prof. Plum",
+  "status": "REVIEWING",
+  "totalCount": 2,
+  "completedCount": 1,
+  "errorCount": 0,
+  "createdAt": "2026-07-01T10:00:00+00:00",
+  "startedAt": "2026-07-01T10:00:05+00:00",
+  "updatedAt": "2026-07-01T10:05:00+00:00",
+  "lock": {
+    "owner": "GRADER01:3c9d2b7e",
+    "ownerName": "Prof. Plum",
+    "heartbeatUtc": "2026-07-01T10:05:00+00:00"
+  },
+  "grades": [
+    {
+      "canvasUserId": 1001,
+      "studentName": "Student A",
+      "submissionType": "online_upload",
+      "attachmentMime": "application/pdf",
+      "attachmentCount": 1,
+      "extractionWarnings": [],
+      "submittedAt": "2026-06-30T23:59:00+00:00",
+      "status": "DRAFT",
+      "submissionExcerpt": "In this essay I argue that...",
+      "excerptTruncated": false,
+      "aiDraft": {
+        "totalPoints": "18/20",
+        "assignmentFeedback": "Nice work overall.",
+        "rubrics": [
+          {
+            "criterionId": "_4692",
+            "ratingId": "_1",
+            "points": 10,
+            "ratingFeedback": "Clear thesis."
+          },
+          {
+            "criterionId": "1745118159974",
+            "points": 8,
+            "ratingFeedback": "Cite one more source."
+          }
+        ]
+      },
+      "llm": {
+        "inputTokens": 1200,
+        "outputTokens": 300,
+        "latencyMs": 4500
+      },
+      "updatedAt": "2026-07-01T10:04:00+00:00"
+    },
+    {
+      "canvasUserId": 1002,
+      "studentName": "Student B",
+      "attachmentCount": 0,
+      "extractionWarnings": [],
+      "status": "PENDING",
+      "excerptTruncated": false,
+      "updatedAt": "2026-07-01T10:00:05+00:00"
+    }
+  ],
+  "quizGrades": []
+}

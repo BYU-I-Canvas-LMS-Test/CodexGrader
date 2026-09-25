@@ -1,0 +1,35 @@
+{
+  "name": "@aigrader/extraction",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "@aigrader/source": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aigrader/shared": "workspace:*",
+    "exceljs": "^4.4.0",
+    "mammoth": "^1.8.0",
+    "papaparse": "^5.4.0",
+    "parse5": "^7.2.0",
+    "pdfjs-dist": "^4.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/papaparse": "^5.3.0",
+    "jszip": "^3.10.1",
+    "typescript": "^5.9.0",
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,0 +1,17 @@
+# Force LF in the working tree for all text files, on every platform.
+#
+# NOT optional: prompt files embed their newlines in multi-line template
+# literals, and the golden tests pin prompt BYTES.
+# A CRLF checkout would silently rewrite every prompt string.
+* text=auto eol=lf
+
+# Binaries
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.7z binary

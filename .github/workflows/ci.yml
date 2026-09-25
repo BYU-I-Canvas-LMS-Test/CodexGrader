@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    # The tool runs on faculty Macs and Windows PCs — test on both, plus Linux.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: No legacy/SaaS residue
+        run: node scripts/check-no-legacy.mjs
+      - run: pnpm run typecheck
+      - run: pnpm run test
+      - run: pnpm run build
+      # The server end to end through the real Next build (skipped above,
+      # before .next existed): login link → session → guarded approve.
+      - name: Local server e2e (real review UI)
+        run: pnpm --filter @aigrader/cli exec vitest run tests/e2e-next.test.ts
+      # The CLI starts and stops on each OS with the built bundle.
+      - name: CLI smoke (serve → status → stop)
+        shell: bash
+        run: |
+          export AIGRADER_HOME="$RUNNER_TEMP/aigrader-home"
+          mkdir -p "$AIGRADER_HOME"
+          printf 'CANVAS_BASE_URL=https://byui.instructure.com\nCANVAS_API_TOKEN=\n' > "$AIGRADER_HOME/.env"
+          node apps/aigrader/bin/aigrader.mjs serve --detach
+          node apps/aigrader/bin/aigrader.mjs status
+          node apps/aigrader/bin/aigrader.mjs stop

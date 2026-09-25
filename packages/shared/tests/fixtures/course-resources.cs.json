@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "canvasCourseId": 4409,
+  "resources": [
+    {
+      "canvasAssignmentId": 11824,
+      "assignmentName": "Budget Workbook",
+      "kind": "KEY",
+      "fileName": "a11824-key.xlsx",
+      "originalFilename": "Budget KEY final.xlsx",
+      "contentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "canvasFileId": 987654,
+      "uploadedAt": "2026-05-01T12:00:00+00:00"
+    },
+    {
+      "canvasAssignmentId": 11824,
+      "assignmentName": "Budget Workbook",
+      "kind": "TEMPLATE",
+      "fileName": "a11824-template.xlsx",
+      "originalFilename": "Budget Starter.xlsx",
+      "canvasFileId": 987655,
+      "uploadedAt": "2026-05-01T12:01:00+00:00"
+    }
+  ],
+  "prep": {
+    "11824": {
+      "customInstructions": "Check formulas on the summary tab.",
+      "shareRubric": true,
+      "shareInstructions": false
+    }
+  }
+}
