@@ -1,10 +1,10 @@
 // The control channel: single-instance lock, the per-start key, request/
 // response over newline JSON, and (macOS/Linux) stale-socket recovery.
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   AlreadyRunningError,
@@ -71,14 +71,24 @@ describe('control channel', () => {
   });
 
   it.skipIf(process.platform === 'win32')('recovers a stale socket file left by a crash', async () => {
-    // Leave a socket file behind with no listener (simulated crash).
-    const ghost = createServer();
-    await new Promise<void>((r) => ghost.listen(endpoint, () => r()));
-    await new Promise<void>((r) => {
-      // close() would unlink the file; keep it by dropping the handle abruptly
-      (ghost as unknown as { _handle: { close(): void } })._handle.close();
-      r();
+    // A real crash: another process listens on the socket and is SIGKILLed,
+    // so nothing unlinks the file (a normal close() would).
+    mkdirSync(dirname(endpoint), { recursive: true });
+    const crashed = spawn(
+      process.execPath,
+      ['-e', "require('net').createServer().listen(process.argv[1], () => console.log('ready'))", endpoint],
+      { stdio: ['ignore', 'pipe', 'inherit'] },
+    );
+    await new Promise<void>((resolve, reject) => {
+      crashed.stdout!.once('data', () => resolve());
+      crashed.once('exit', (code) => reject(new Error(`listener exited early (${code})`)));
     });
+    await new Promise<void>((resolve) => {
+      crashed.once('exit', () => resolve());
+      crashed.kill('SIGKILL');
+    });
+    expect(existsSync(endpoint)).toBe(true); // the stale file is really there
+
     const server = await listen();
     const client = await connectControl({ endpoint, keyFile });
     expect(client.hello.ok).toBe(true);

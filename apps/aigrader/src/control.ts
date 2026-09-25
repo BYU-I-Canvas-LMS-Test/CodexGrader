@@ -12,8 +12,9 @@
 // Ops (Phase 2): hello, status, open {path?}, stop. The MCP shim (Phase 5)
 // rides the same channel.
 
-import { chmodSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { createConnection, createServer, type Server, type Socket } from 'node:net';
+import { dirname } from 'node:path';
 import { createInterface } from 'node:readline';
 import { timingSafeEqual } from 'node:crypto';
 
@@ -135,6 +136,9 @@ export async function listenControl(opts: {
 }
 
 async function bind(server: Server, endpoint: string): Promise<void> {
+  // A Unix socket needs its folder to exist (libuv reports a missing folder
+  // as EACCES, not ENOENT). Named pipes have no folder.
+  if (process.platform !== 'win32') mkdirSync(dirname(endpoint), { recursive: true, mode: 0o700 });
   try {
     await listenOnce(server, endpoint);
     return;
