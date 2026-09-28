@@ -11,7 +11,7 @@
 import { join } from 'node:path';
 import { GradingCallError, type ModelCallFn } from '@aigrader/engine';
 import { codexLoginState, probeCodex, type LoginState } from './capabilities.js';
-import { prepareWorkerCatalog, type WorkerCatalog } from './catalog.js';
+import { prepareWorkerCatalog, type CatalogModel, type WorkerCatalog } from './catalog.js';
 import { existingCodexCandidates, type CodexSource } from './locator.js';
 import { createCodexModelCall } from './model-call.js';
 import type { CodexCommand } from './process.js';
@@ -59,6 +59,8 @@ export interface CodexBackend {
   refresh(): Promise<CodexStatus>;
   /** The model to use: the requested one if this account has it, else the default. */
   resolveModel(requested?: string): { model: string; note: string | null };
+  /** The models this account lists, in the account's order (empty until ready). */
+  models(): CatalogModel[];
   usage(force?: boolean): Promise<UsageSnapshot | null>;
 }
 
@@ -79,6 +81,7 @@ export function createCodexBackend(options: CodexBackendOptions): CodexBackend {
   let status: CodexStatus = { ...EMPTY };
   let cmd: CodexCommand | null = null;
   let catalogFile: string | null = null;
+  let listedModels: CatalogModel[] = [];
   let disable: string[] = [];
   let quota: QuotaGuard | null = null;
   let probing: Promise<CodexStatus> | null = null;
@@ -126,7 +129,8 @@ export function createCodexBackend(options: CodexBackendOptions): CodexBackend {
         const catalog = await prepareWorkerCatalog(candidate.cmd, join(options.stateDir, 'worker-catalog.json'));
         catalogFile = catalog.file;
         next.defaultModel = catalog.defaultModel;
-        next.models = catalog.models.filter((m) => m.listed).map((m) => m.slug);
+        listedModels = catalog.models.filter((m) => m.listed).sort((a, b) => a.priority - b.priority);
+        next.models = listedModels.map((m) => m.slug);
         next.catalogSource = catalog.source;
         quota = new QuotaGuard({
           read: options.usageReader ?? createUsageReader(candidate.cmd),
@@ -180,7 +184,7 @@ export function createCodexBackend(options: CodexBackendOptions): CodexBackend {
     const fallback = status.defaultModel ?? wanted ?? '';
     return {
       model: fallback,
-      note: wanted ? `AIGRADER_MODEL=${wanted} is not available on this Codex account; using ${fallback}.` : null,
+      note: wanted ? `The grading model ${wanted} is not available on this Codex account; using ${fallback}.` : null,
     };
   };
 
@@ -190,7 +194,9 @@ export function createCodexBackend(options: CodexBackendOptions): CodexBackend {
     if (status.state !== 'ready') {
       throw new GradingCallError(status.message ?? 'Codex is not available.', { retryable: false, kind: 'auth' });
     }
-    const model = request.model || status.defaultModel || '';
+    // A run records its model; resumed on an account without it (another
+    // computer, a plan change), it grades with this account's default.
+    const model = resolveModel(request.model).model;
     try {
       return await inner({ ...request, model });
     } catch (err) {
@@ -205,6 +211,7 @@ export function createCodexBackend(options: CodexBackendOptions): CodexBackend {
     status: () => status,
     refresh,
     resolveModel,
+    models: () => listedModels,
     usage: async (force = false) => (quota ? quota.snapshot(force) : null),
   };
 }

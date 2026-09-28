@@ -128,6 +128,17 @@ describe('startup', () => {
     expect(b.resolveModel('gpt-fake-luna')).toEqual({ model: 'gpt-fake-luna', note: null });
     expect(b.resolveModel('gpt-6-astra')).toMatchObject({ model: 'gpt-fake-sol', note: expect.stringContaining('not available') });
     expect(b.resolveModel(undefined)).toEqual({ model: 'gpt-fake-sol', note: null });
+    // The listed models (hidden ones left out), in the account's order.
+    expect(b.models().map((m) => [m.slug, m.reasoningLevels])).toEqual([
+      ['gpt-fake-sol', ['low', 'medium', 'high']],
+      ['gpt-fake-luna', ['low', 'medium', 'high']],
+    ]);
+  });
+
+  it('a call asking for a model this account lacks grades with the default', async () => {
+    const b = backend();
+    await grade(b, { model: 'gpt-from-another-laptop' });
+    expect(calls()[0]!.argv.join(' ')).toContain('--model gpt-fake-sol');
   });
 });
 

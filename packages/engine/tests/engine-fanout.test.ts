@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   FakeCanvas,
+  TEST_CONFIG,
   TEST_COURSE_KEY,
   buildEngine,
   graderOutputJson,
@@ -430,5 +431,41 @@ describe('cancel mid-run', () => {
     const result = await engine.cancel(runId);
     expect(result.status).toBe('flagged');
     expect(progressStore.docs.get(runId)!.cancelRequested).toBe(true);
+  });
+});
+
+describe('grading settings', () => {
+  const modelsSeen = (calls: unknown[]) =>
+    calls.map((c) => {
+      const call = c as { model?: string; reasoningEffort?: string };
+      return `${call.model}/${call.reasoningEffort}`;
+    });
+
+  it('a run keeps the model + thinking level it started with; a change applies to the next run', async () => {
+    const config = { ...TEST_CONFIG, model: 'model-a', reasoningEffort: 'medium' };
+    const harness = buildEngine({ canvas: assignmentCanvas(), config });
+    const { engine, registry, modelCalls } = harness;
+
+    const first = await engine.startRun({ ...START_ARGS, target: { kind: 'assignment', assignmentId: 501 } });
+    // The teacher saves new settings while the first run is still drafting.
+    config.model = 'model-b';
+    config.reasoningEffort = 'high';
+    await engine.onIdle();
+    expect(registry.get(first.runId)!.session.document.modelName).toBe('model-a');
+    expect(new Set(modelsSeen(modelCalls))).toEqual(new Set(['model-a/medium']));
+
+    modelCalls.length = 0;
+    const second = await engine.startRun({ ...START_ARGS, target: { kind: 'assignment', assignmentId: 501 } });
+    await engine.onIdle();
+    const doc = registry.get(second.runId)!.session.document;
+    expect([doc.modelName, doc.reasoningEffort]).toEqual(['model-b', 'high']);
+    expect(new Set(modelsSeen(modelCalls))).toEqual(new Set(['model-b/high']));
+    await shutdown(harness);
+  });
+
+  it('the worker count changes the grade queue immediately', () => {
+    const harness = buildEngine();
+    harness.engine.setGradeConcurrency(3);
+    expect(harness.engine.gradeQueue.concurrency).toBe(3);
   });
 });

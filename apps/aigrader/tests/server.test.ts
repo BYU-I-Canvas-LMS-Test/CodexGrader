@@ -196,6 +196,56 @@ describe('local server', () => {
   });
 });
 
+describe('Grader Settings (review page → settings.json → live engine)', () => {
+  it('starts from the defaults, saves a change, and applies it without a restart', async () => {
+    const server = await start();
+    const view = await server.host.gradingSettings();
+    expect(view.settings).toEqual({ model: '', reasoningEffort: 'medium', maxWorkers: 2 });
+    expect(view.workers).toEqual({ min: 1, max: 4, recommended: 2 });
+    expect(view.codex).toBeNull();
+
+    const result = await server.host.updateGradingSettings({ reasoningEffort: 'high', maxWorkers: 3 });
+    expect(result).toMatchObject({ ok: true, view: { settings: { model: '', reasoningEffort: 'high', maxWorkers: 3 } } });
+    expect(server.runtime.config.reasoningEffort).toBe('high');
+    expect(server.runtime.engine.gradeQueue.concurrency).toBe(3);
+    expect(JSON.parse(readFileSync(paths.settingsFile, 'utf8'))).toEqual({
+      schemaVersion: 1,
+      model: '',
+      reasoningEffort: 'high',
+      maxWorkers: 3,
+    });
+  });
+
+  it('refuses values it cannot use, changing nothing', async () => {
+    const server = await start();
+    for (const update of [{ maxWorkers: 9 }, { maxWorkers: 1.5 }, { reasoningEffort: 'ludicrous' }, { model: 'gpt-anything' }]) {
+      expect(await server.host.updateGradingSettings(update as never)).toMatchObject({ ok: false });
+    }
+    expect(existsSync(paths.settingsFile)).toBe(false);
+    expect(server.runtime.engine.gradeQueue.concurrency).toBe(2);
+  });
+
+  it('saved settings survive a restart and win over the older .env lines', async () => {
+    writeFileSync(
+      paths.envFile,
+      `CANVAS_BASE_URL=https://byui.instructure.com
+CANVAS_API_TOKEN=${TOKEN}
+AIGRADER_MAX_WORKERS=1
+AIGRADER_REASONING_EFFORT=low
+`,
+    );
+    let server = await start();
+    expect((await server.host.gradingSettings()).settings).toMatchObject({ reasoningEffort: 'low', maxWorkers: 1 });
+    await server.host.updateGradingSettings({ maxWorkers: 4 });
+    await server.stop('test');
+
+    server = await start();
+    expect((await server.host.gradingSettings()).settings).toMatchObject({ reasoningEffort: 'low', maxWorkers: 4 });
+    expect(server.runtime.config.gradeConcurrency).toBe(4);
+    expect(server.runtime.engine.gradeQueue.concurrency).toBe(4);
+  });
+});
+
 describe('with the Codex backend (FakeCodex)', () => {
   it('resolves the grading model from the account catalog and reports Codex + usage in status', async () => {
     process.env.FAKE_CODEX_DIR = join(home, 'fake');
@@ -217,7 +267,7 @@ AIGRADER_MODEL=gpt-6-astra
     for (let i = 0; i < 50 && server.runtime.config.model !== 'gpt-fake-sol'; i++) await new Promise((r) => setTimeout(r, 10));
     // gpt-6-astra isn't on this account → the account default, with a note.
     expect(server.runtime.config.model).toBe('gpt-fake-sol');
-    expect(logs.some((l) => l.includes('AIGRADER_MODEL=gpt-6-astra is not available'))).toBe(true);
+    expect(logs.some((l) => l.includes('gpt-6-astra is not available'))).toBe(true);
 
     const client = await connectControl({ endpoint: paths.controlEndpoint, keyFile: paths.controlKeyFile });
     const status = await client.request('status');
@@ -228,5 +278,38 @@ AIGRADER_MODEL=gpt-6-astra
     });
     delete process.env.FAKE_CODEX_DIR;
     delete process.env.FAKE_CODEX_USAGE;
+  }, 30_000);
+
+  it('Grader Settings offer the Codex account models and their thinking levels', async () => {
+    process.env.FAKE_CODEX_DIR = join(home, 'fake');
+    const codex = createCodexBackend({
+      command: { command: process.execPath, prefixArgs: [FAKE_CODEX] },
+      stateDir: join(home, 'state', 'codex'),
+    });
+    const server = await start({ llm: undefined, codex });
+    const view = await server.host.gradingSettings(); // waits for Codex to start
+    expect(view.codex).toEqual({ state: 'ready', message: null });
+    expect(view.defaultModel).toBe('gpt-fake-sol');
+    expect(view.activeModel).toBe('gpt-fake-sol');
+    expect(view.models.map((m) => [m.slug, m.reasoningLevels])).toEqual([
+      ['gpt-fake-sol', ['low', 'medium', 'high']],
+      ['gpt-fake-luna', ['low', 'medium', 'high']],
+    ]);
+
+    expect(await server.host.updateGradingSettings({ model: 'gpt-fake-luna' })).toMatchObject({
+      ok: true,
+      view: { activeModel: 'gpt-fake-luna' },
+    });
+    expect(server.runtime.config.model).toBe('gpt-fake-luna');
+    // Not on this account / not supported by the model.
+    expect(await server.host.updateGradingSettings({ model: 'gpt-6-astra' })).toMatchObject({ ok: false });
+    expect(await server.host.updateGradingSettings({ reasoningEffort: 'xhigh' })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining('does not support Extra high'),
+    });
+    // Back to the account default.
+    await server.host.updateGradingSettings({ model: '' });
+    expect(server.runtime.config.model).toBe('gpt-fake-sol');
+    delete process.env.FAKE_CODEX_DIR;
   }, 30_000);
 });

@@ -26,6 +26,47 @@ export interface EngineDispatchResponse {
   body: Uint8Array;
 }
 
+/** The teacher's grading preferences for this computer (Grader Settings).
+ * Saved by the local server in ~/.aigrader/settings.json — never in Canvas,
+ * never in .env. */
+export interface GradingSettings {
+  /** Codex model slug; '' = the Codex account's recommended default. */
+  model: string;
+  /** Thinking level: 'low' | 'medium' | 'high' | 'xhigh' | 'max'. */
+  reasoningEffort: string;
+  /** Students graded at the same time. */
+  maxWorkers: number;
+}
+
+/** A model the teacher's Codex account offers. */
+export interface GradingModelOption {
+  slug: string;
+  displayName: string;
+  /** Thinking levels this model supports (empty = unknown). */
+  reasoningLevels: string[];
+  defaultReasoning: string | null;
+}
+
+/** Grader Settings as the review page shows them. */
+export interface GradingSettingsView {
+  settings: GradingSettings;
+  /** The model the next run will use (the default resolved); null = not known yet. */
+  activeModel: string | null;
+  /** The account's recommended default model, once Codex is ready. */
+  defaultModel: string | null;
+  /** Empty while Codex starts (or when it is unavailable). */
+  models: GradingModelOption[];
+  /** Every thinking level the grader accepts. */
+  reasoningEfforts: string[];
+  workers: { min: number; max: number; recommended: number };
+  /** Codex readiness; null when grading doesn't run through Codex (tests). */
+  codex: { state: string; message: string | null } | null;
+}
+
+export type GradingSettingsUpdateResult =
+  | { ok: true; view: GradingSettingsView }
+  | { ok: false; message: string };
+
 /** What the local server exposes to the web tier. */
 export interface LocalHost {
   /** Server version (shown in the UI footer; compared by the MCP shim). */
@@ -51,6 +92,11 @@ export interface LocalHost {
   csrfTokenFor(sessionCookieValue: string): string;
   /** Records browser activity (keeps the idle-shutdown timer from firing). */
   noteActivity(): void;
+  /** Grader Settings plus the choices the teacher's Codex account offers. */
+  gradingSettings(): Promise<GradingSettingsView>;
+  /** Validates, saves, and applies new Grader Settings (no restart). Call
+   * only from the browser-guarded settings route. */
+  updateGradingSettings(update: Partial<GradingSettings>): Promise<GradingSettingsUpdateResult>;
 }
 
 /** globalThis key the server installs the host under. */

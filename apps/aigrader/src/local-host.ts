@@ -16,7 +16,14 @@
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { inject, type DispatchFunc } from 'light-my-request';
-import type { EngineDispatchRequest, EngineDispatchResponse, LocalHost } from '@aigrader/shared';
+import type {
+  EngineDispatchRequest,
+  EngineDispatchResponse,
+  GradingSettings,
+  GradingSettingsUpdateResult,
+  GradingSettingsView,
+  LocalHost,
+} from '@aigrader/shared';
 import { APPROVAL_CAPABILITY_HEADER } from '@aigrader/engine';
 
 export const SESSION_COOKIE_NAME = 'aigrader_session';
@@ -31,6 +38,11 @@ export interface LocalHostOptions {
   /** Engine app WITH the approval capability (approve only). */
   approveApp: DispatchFunc;
   approvalCapability: string;
+  /** Grader Settings (owned by the server: ~/.aigrader/settings.json). */
+  settings: {
+    get(): Promise<GradingSettingsView>;
+    update(update: Partial<GradingSettings>): Promise<GradingSettingsUpdateResult>;
+  };
   onActivity?: () => void;
   now?: () => number;
 }
@@ -134,6 +146,14 @@ export function createLocalHost(options: LocalHostOptions): LocalHostImpl {
 
     noteActivity() {
       options.onActivity?.();
+    },
+
+    gradingSettings() {
+      return options.settings.get();
+    },
+
+    updateGradingSettings(update) {
+      return options.settings.update(update);
     },
 
     issueLoginToken() {

@@ -12,8 +12,9 @@
 //     LocalHost for the web tier, start Next, then run the resume sweep so
 //     runs interrupted by a crash, reboot, sleep, or idle exit pick back up.
 //   - run: re-sweep every few minutes; reload .env when it changes (a fixed
-//     token resumes runs paused on a Canvas 401); keep the laptop awake
-//     while a run drafts or posts.
+//     token resumes runs paused on a Canvas 401); apply Grader Settings
+//     saved from the review page; keep the laptop awake while a run drafts
+//     or posts.
 //   - stop (idle 30 min, `aigrader stop`, a signal): final checkpoint for
 //     every live run (locks released), then exit. Nothing is left behind
 //     but ids in ~/.aigrader/state.
@@ -35,11 +36,20 @@ import {
   type EngineRuntime,
   type GradingLlm,
 } from '@aigrader/engine';
-import { LOCAL_HOST_GLOBAL, setAuditSink } from '@aigrader/shared';
+import { LOCAL_HOST_GLOBAL, setAuditSink, type GradingSettings, type GradingSettingsView } from '@aigrader/shared';
 import { createJsonlAuditSink, pruneAudit } from './audit-sink.js';
 import { openInBrowser, type BrowserOpener } from './browser.js';
 import { listenControl, type ControlRequest, type ControlResponse } from './control.js';
-import { EnvConfigLoader, type EnvConfig, type EnvSettings } from './env-config.js';
+import { EnvConfigLoader, type EnvConfig } from './env-config.js';
+import {
+  REASONING_EFFORTS,
+  WORKERS,
+  effectiveSettings,
+  readSavedSettings,
+  validateSettingsUpdate,
+  writeSavedSettings,
+  type SavedSettings,
+} from './grading-settings.js';
 import { FilePostLedger } from './ledger.js';
 import { createLocalHost, type LocalHostImpl } from './local-host.js';
 import type { AigraderPaths } from './paths.js';
@@ -59,6 +69,8 @@ export const IDLE_CHECK_MS = 60 * 1000;
 export const SWEEP_EVERY_MS = 3 * 60 * 1000;
 /** Ports tried after the preferred one before falling back to any free port. */
 const PORT_ATTEMPTS = 10;
+/** How long the settings page waits for Codex to finish starting. */
+const SETTINGS_CODEX_WAIT_MS = 10_000;
 
 export interface StartServerOptions {
   paths: AigraderPaths;
@@ -131,6 +143,9 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
       onChange: (config) => onEnvChange(config),
     });
     for (const problem of env.current.problems) log(`[config] ${problem}`);
+    // Grader Settings from the review page win over the older .env lines.
+    let saved: SavedSettings = readSavedSettings(paths.settingsFile, log);
+    const gradingSettings = () => effectiveSettings(env.current.settings, saved);
     const credentials = new StaticCredentialProvider(env.current.entries);
 
     const progressStore = new LocalProgressStore({
@@ -160,18 +175,70 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
       credentials,
       llm,
       progressStore,
-      config: engineConfigFromEnv({ ...process.env, ...settingsEnv(env.current.settings) }),
+      config: engineConfigFromEnv({ ...process.env, ...settingsEnv(gradingSettings()) }),
       ledger,
       generator: `byui-ai-grader/${version}`,
       warn: log,
     });
     // Record the real model on every run: the teacher's choice if their plan
     // has it, else the account's default.
-    void codex?.ready.then(() => {
-      const { model, note } = codex.resolveModel(env.current.settings.model);
+    const applyModel = () => {
+      const wanted = gradingSettings().model;
+      if (!codex) {
+        runtime.config.model = wanted;
+        return;
+      }
+      const { model, note } = codex.resolveModel(wanted);
       runtime.config.model = model;
       if (note) log(`[config] ${note}`);
-    });
+    };
+    // New settings apply without a restart: the next run records the model
+    // and thinking level; the worker count changes the queue right away.
+    const applySettings = () => {
+      const settings = gradingSettings();
+      runtime.config.reasoningEffort = settings.reasoningEffort;
+      runtime.engine.setGradeConcurrency(settings.maxWorkers);
+      applyModel();
+    };
+    void codex?.ready.then(applyModel);
+
+    const settingsView = async (): Promise<GradingSettingsView> => {
+      if (codex && codex.status().state === 'starting') {
+        await Promise.race([codex.ready, new Promise((r) => setTimeout(r, SETTINGS_CODEX_WAIT_MS).unref())]);
+      }
+      const status = codex?.status() ?? null;
+      const efforts: readonly string[] = REASONING_EFFORTS;
+      return {
+        settings: gradingSettings(),
+        activeModel: runtime.config.model || null,
+        defaultModel: status?.defaultModel ?? null,
+        models: (codex?.models() ?? []).map((m) => ({
+          slug: m.slug,
+          displayName: m.displayName,
+          reasoningLevels: m.reasoningLevels.filter((level) => efforts.includes(level)),
+          defaultReasoning: m.defaultReasoning,
+        })),
+        reasoningEfforts: [...REASONING_EFFORTS],
+        workers: { ...WORKERS },
+        codex: status ? { state: status.state, message: status.message } : null,
+      };
+    };
+    const updateSettings = async (update: Partial<GradingSettings>) => {
+      const view = await settingsView();
+      const result = validateSettingsUpdate(update, view.settings, view.models, view.defaultModel);
+      if (!result.ok) return result;
+      try {
+        writeSavedSettings(paths.settingsFile, result.settings);
+      } catch (err) {
+        log(`[config] Could not save ${paths.settingsFile}: ${err instanceof Error ? err.message : String(err)}`);
+        return { ok: false as const, message: `Your settings could not be saved to ${paths.settingsFile}.` };
+      }
+      saved = result.settings;
+      applySettings();
+      const { model, reasoningEffort, maxWorkers } = result.settings;
+      log(`[config] Grader Settings saved: model ${model || 'Codex default'}, ${reasoningEffort} thinking, ${maxWorkers} at a time.`);
+      return { ok: true as const, view: await settingsView() };
+    };
     const approvalCapability = randomBytes(32).toString('base64url');
     const engineApp = createEngineApp({ runtime, credentials, llm });
     const approveApp = createEngineApp({ runtime, credentials, llm, approvalCapability });
@@ -219,6 +286,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
       engineApp,
       approveApp,
       approvalCapability,
+      settings: { get: settingsView, update: updateSettings },
       onActivity: touch,
     });
     (globalThis as Record<string, unknown>)[LOCAL_HOST_GLOBAL] = host;
@@ -337,6 +405,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
 
     function onEnvChange(config: EnvConfig): void {
       credentials.replace(config.entries);
+      applySettings();
       log(`[config] Settings reloaded (${config.entries.length} Canvas instance(s)).`);
       for (const problem of config.problems) log(`[config] ${problem}`);
       if (config.entries.length > 0) {
@@ -409,13 +478,13 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   }
 }
 
-/** The .env tuning knobs as the env vars engineConfigFromEnv reads. */
-function settingsEnv(settings: EnvSettings): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (settings.maxWorkers !== undefined) out.AIGRADER_MAX_WORKERS = String(settings.maxWorkers);
-  if (settings.model) out.AIGRADER_MODEL = settings.model;
-  if (settings.reasoningEffort) out.AIGRADER_REASONING_EFFORT = settings.reasoningEffort;
-  return out;
+/** Grader Settings as the env vars engineConfigFromEnv reads. */
+function settingsEnv(settings: GradingSettings): Record<string, string> {
+  return {
+    AIGRADER_MAX_WORKERS: String(settings.maxWorkers),
+    AIGRADER_MODEL: settings.model,
+    AIGRADER_REASONING_EFFORT: settings.reasoningEffort,
+  };
 }
 
 /** Binds 127.0.0.1: the preferred port, the next few, then any free port. */

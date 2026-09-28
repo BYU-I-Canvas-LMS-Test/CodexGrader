@@ -30,6 +30,12 @@ function buildHost(now: () => number = Date.now) {
     engineApp: createEngineApp({ runtime, credentials, llm }),
     approveApp: createEngineApp({ runtime, credentials, llm, approvalCapability: capability }),
     approvalCapability: capability,
+    settings: {
+      get: async () => {
+        throw new Error('not used here');
+      },
+      update: async () => ({ ok: false, message: 'not used here' }),
+    },
     now,
   });
   return { host, capability };

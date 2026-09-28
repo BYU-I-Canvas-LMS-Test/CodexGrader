@@ -121,7 +121,8 @@ export interface EngineConfig {
   maxOutputTokens?: number;
 }
 
-/** Config from the local .env (AIGRADER_MAX_WORKERS=2 / writeback 2 defaults). */
+/** Config from env vars (AIGRADER_MAX_WORKERS=2 / writeback 2 defaults); the
+ * local server fills them from the teacher's Grader Settings. */
 export function engineConfigFromEnv(env: NodeJS.ProcessEnv = process.env): EngineConfig {
   return {
     gradeConcurrency: Number(env.AIGRADER_MAX_WORKERS ?? 2),
@@ -284,6 +285,13 @@ export class GradingEngine {
     this.instanceId = deps.instanceId ?? INSTANCE_ID;
     this.gradeQueue = new PQueue({ concurrency: deps.config.gradeConcurrency });
     this.writebackQueue = new PQueue({ concurrency: deps.config.writebackConcurrency });
+  }
+
+  /** Students graded at once (the teacher's Grader Settings). Takes effect
+   * immediately: calls already in flight finish; fewer or more start next. */
+  setGradeConcurrency(concurrency: number): void {
+    this.deps.config.gradeConcurrency = concurrency;
+    this.gradeQueue.concurrency = concurrency;
   }
 
   /** Both queues drained (tests / graceful checks). */
@@ -1276,6 +1284,15 @@ export class GradingEngine {
     };
     this.deps.registry.create(live);
 
+    // A run grades with the model + thinking level recorded when it started:
+    // a settings change made while it drafts applies to the NEXT run, and a
+    // resume (here or on another computer) keeps the run's choice. Documents
+    // without them (older runs) use the current settings.
+    const modelConfig = {
+      model: doc.modelName || this.deps.config.model,
+      reasoningEffort: doc.reasoningEffort || this.deps.config.reasoningEffort,
+      maxOutputTokens: this.deps.config.maxOutputTokens,
+    };
     const ctx: RunContext = {
       live,
       clients,
@@ -1285,14 +1302,14 @@ export class GradingEngine {
         resources: clients.resources,
         discussions: this.discussions,
         llm: this.deps.llm,
-        config: this.deps.config,
+        config: modelConfig,
         warn: this.warn,
       }),
       quizGrader: new QuizGraderAgent({
         canvas: clients.canvas,
         profiles: clients.profiles,
         llm: this.deps.llm,
-        config: this.deps.config,
+        config: modelConfig,
         warn: this.warn,
       }),
       writeback: new WritebackService({

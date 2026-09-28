@@ -62,6 +62,10 @@ function fakeHost(): LocalHost & { engineCalls: unknown[]; approveCalls: unknown
     redeemLoginToken: (token) => (tokens.delete(token) ? SESSION : null),
     csrfTokenFor: (session) => (session === SESSION ? CSRF : 'nope'),
     noteActivity: () => {},
+    gradingSettings: async () => {
+      throw new Error('not used here');
+    },
+    updateGradingSettings: async () => ({ ok: false, message: 'not used here' }),
   };
 }
 

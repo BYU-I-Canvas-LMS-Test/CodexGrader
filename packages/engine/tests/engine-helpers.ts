@@ -326,6 +326,8 @@ export function buildEngine(
     instanceId?: string;
     /** 0 = no heartbeat-only flushes (drills flush explicitly). */
     heartbeatMs?: number;
+    /** Engine config (default: a fresh copy of TEST_CONFIG). */
+    config?: EngineConfig;
   } = {},
 ): TestEngineHarness {
   const clock = opts.clock ?? new TestClock();
@@ -362,7 +364,7 @@ export function buildEngine(
     progressStore,
     llm,
     clients: async () => clients,
-    config: TEST_CONFIG,
+    config: opts.config ?? { ...TEST_CONFIG },
     now: clock.now,
     warn: () => {},
     auditFn: () => {},

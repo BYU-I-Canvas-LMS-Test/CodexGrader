@@ -1,7 +1,7 @@
 // End to end through the REAL Next.js build (skipped until `pnpm build` has
 // produced apps/web/.next): the one-time login link becomes a browser
-// session; with it — and only with it — a same-origin approve request gets
-// past the guard to the engine. Curl-style requests never do.
+// session; with it — and only with it — a same-origin approve (or Grader
+// Settings) request gets past the guard. Curl-style requests never do.
 
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -92,5 +92,36 @@ describe.skipIf(!built)('review UI through the real Next build', () => {
       body: JSON.stringify({ all: true }),
     });
     expect(noCsrf.status).toBe(403);
+  }, 60_000);
+
+  it('Grader Settings: read with the browser session, saved only by the review page', async () => {
+    const url = `${server.origin}/api/settings`;
+    expect((await fetch(url)).status).toBe(401);
+
+    server.openReview('/connect');
+    const login = await fetch(opened[opened.length - 1]!, { redirect: 'manual' });
+    const cookies = login.headers.getSetCookie().map((c) => c.split(';')[0]!);
+    const csrf = decodeURIComponent(cookies.find((c) => c.startsWith('aigrader_csrf='))!.split('=')[1]!);
+    const cookie = cookies.join('; ');
+
+    const read = await fetch(url, { headers: { cookie } });
+    expect(read.status).toBe(200);
+    expect(await read.json()).toMatchObject({ settings: { model: '', reasoningEffort: 'medium', maxWorkers: 2 } });
+
+    const put = (headers: Record<string, string>, body: unknown) =>
+      fetch(url, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', origin: server.origin, 'sec-fetch-site': 'same-origin', cookie, ...headers },
+        body: JSON.stringify(body),
+      });
+    expect((await put({}, { maxWorkers: 3 })).status).toBe(403); // no CSRF echo
+    const bad = await put({ 'x-aigrader-csrf': csrf }, { maxWorkers: 12 });
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toMatchObject({ error: 'invalid_settings' });
+
+    const saved = await put({ 'x-aigrader-csrf': csrf }, { maxWorkers: 3, reasoningEffort: 'low' });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toMatchObject({ settings: { reasoningEffort: 'low', maxWorkers: 3 } });
+    expect(server.runtime.engine.gradeQueue.concurrency).toBe(3);
   }, 60_000);
 });

@@ -3,7 +3,8 @@
 // Ported from: C:\Devs\AIGrader-C#\src\AiGrader\Components\Layout\LtiLayout.razor
 // (the ink sidebar shell: brand, nav, Canvas pill, user chip — itself a port
 // of the TS app's app/lti sidebar); routes are course-scoped
-// (/courses/[courseKey]/…) instead of /lti.
+// (/courses/[courseKey]/…) instead of /lti. The brand and the course name
+// both lead back to the course picker (/connect); Grader Settings added.
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -40,6 +41,7 @@ export function CourseSidebar({
     { href: `${base}/runs`, label: 'Grading Runs', icon: <I.List /> },
     { href: `${base}/profile`, label: 'Course AI Profile', icon: <I.Smile /> },
     { href: `${base}/outcomes`, label: 'Outcomes & Alignment', icon: <I.Target /> },
+    { href: `${base}/settings`, label: 'Grader Settings', icon: <I.Sliders /> },
     { href: `${base}/help`, label: 'Help & Resources', icon: <I.Help /> },
   ];
 
@@ -51,13 +53,13 @@ export function CourseSidebar({
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-brand">
+      <Link className="sidebar-brand" href="/connect" title="Back to your courses">
         <span className="logomark">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/aigrader-white-square.png" alt="" aria-hidden />
         </span>
         <span className="name">BYU-(A)I Grader</span>
-      </div>
+      </Link>
       <nav aria-label="Course navigation">
         {items.map((item) => (
           <Link
@@ -76,9 +78,14 @@ export function CourseSidebar({
         <div className="row">
           <I.Canvas w={15} h={15} /> Connected to Canvas
         </div>
-        <div className="course">
-          <span title={`Course ${courseId}`}>{courseName}</span>
-        </div>
+        <Link
+          className="course course-switch"
+          href="/connect"
+          title={`Course ${courseId}. Choose a different course.`}
+        >
+          <span className="course-name">{courseName}</span>
+          <span className="switch">Switch</span>
+        </Link>
       </div>
       <div className="user-card">
         <div className="avatar" aria-hidden>

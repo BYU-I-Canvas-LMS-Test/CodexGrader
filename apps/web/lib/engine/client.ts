@@ -11,7 +11,14 @@
 
 import 'server-only';
 
-import { LOCAL_HOST_GLOBAL, type EngineDispatchResponse, type LocalHost } from '@aigrader/shared';
+import {
+  LOCAL_HOST_GLOBAL,
+  type EngineDispatchResponse,
+  type GradingSettings,
+  type GradingSettingsUpdateResult,
+  type GradingSettingsView,
+  type LocalHost,
+} from '@aigrader/shared';
 
 export interface EngineResponse {
   status: number;
@@ -96,4 +103,16 @@ export async function engineFetchRaw(
  */
 export async function engineApprove(runId: string, body: unknown): Promise<EngineResponse> {
   return decodeJson(await getLocalHost().approve(runId, body));
+}
+
+/** Grader Settings (workers, model, thinking level) and the choices the
+ * teacher's Codex account offers. Owned by the local server, not the engine
+ * — they live in ~/.aigrader/settings.json. */
+export function getGradingSettings(): Promise<GradingSettingsView> {
+  return getLocalHost().gradingSettings();
+}
+
+/** Saves Grader Settings. Use ONLY from the browser-guarded settings route. */
+export function saveGradingSettings(update: Partial<GradingSettings>): Promise<GradingSettingsUpdateResult> {
+  return getLocalHost().updateGradingSettings(update);
 }

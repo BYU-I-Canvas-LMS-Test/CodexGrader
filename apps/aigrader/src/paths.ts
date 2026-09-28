@@ -4,6 +4,7 @@
 //
 //   ~/.aigrader/                (Windows: %USERPROFILE%\.aigrader\)
 //     .env                      the teacher's Canvas URL + token (hand-edited)
+//     settings.json             Grader Settings (workers, model, thinking level)
 //     state/active-runs.json    ids of runs to resume on the next start
 //     state/server.json         {port, pid, version} of the running server
 //     state/control.key         per-start secret for the control pipe
@@ -22,6 +23,8 @@ import { join } from 'node:path';
 export interface AigraderPaths {
   home: string;
   envFile: string;
+  /** Grader Settings saved from the review page. */
+  settingsFile: string;
   stateDir: string;
   activeRunsFile: string;
   serverJsonFile: string;
@@ -50,6 +53,7 @@ export function resolvePaths(
   return {
     home,
     envFile: opts.envFile ?? (env.AIGRADER_ENV_FILE?.trim() || join(home, '.env')),
+    settingsFile: join(home, 'settings.json'),
     stateDir,
     activeRunsFile: join(stateDir, 'active-runs.json'),
     serverJsonFile: join(stateDir, 'server.json'),
