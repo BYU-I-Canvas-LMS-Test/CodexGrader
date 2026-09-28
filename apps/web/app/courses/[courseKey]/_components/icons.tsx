@@ -182,6 +182,18 @@ export const I = {
       <path d="M12 7v5l3 2" />
     </Ico>
   ),
+  Calendar: (p: IconProps) => (
+    <Ico {...p}>
+      <rect x="4" y="5" width="16" height="16" rx="2" />
+      <path d="M8 3v4M16 3v4M4 10h16" />
+    </Ico>
+  ),
+  Tag: (p: IconProps) => (
+    <Ico {...p}>
+      <path d="M3 12V4h8l10 10-8 8L3 12z" />
+      <circle cx="7.5" cy="8.5" r="1.2" fill="currentColor" stroke="none" />
+    </Ico>
+  ),
   List: (p: IconProps) => (
     <Ico {...p}>
       <path d="M8 6h13M8 12h13M8 18h13" />

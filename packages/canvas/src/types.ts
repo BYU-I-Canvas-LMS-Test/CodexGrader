@@ -437,15 +437,31 @@ export const canvasCourseInfoSchema = z.object({
 export type CanvasCourseInfo = z.infer<typeof canvasCourseInfoSchema>;
 
 /**
- * A course row from GET /api/v1/courses (the personal-token course picker).
+ * A course row from GET /api/v1/courses (the personal-token course picker),
+ * requested with include[]=course_image, needs_grading_count, and term.
  * Not in the C# app (it was LTI-launched); needed for the PAT connect flow.
  */
 export const canvasCourseSchema = z.object({
   id: z.number(),
   name: z.string().nullish(),
   course_code: z.string().nullish(),
+  /** 'unpublished' | 'available' | 'completed' | 'deleted' */
   workflow_state: z.string().nullish(),
   account_id: z.number().nullish(),
+  end_at: z.string().nullish(),
+  /** include[]=course_image — present only when the course has an image set. */
+  image_download_url: z.string().nullish(),
+  /** include[]=needs_grading_count — submissions awaiting grading across all
+   * assignments; absent when the caller has no grading rights. */
+  needs_grading_count: lenientNullableNumber,
+  /** include[]=term */
+  term: z
+    .object({
+      id: z.number().nullish(),
+      name: z.string().nullish(),
+      end_at: z.string().nullish(),
+    })
+    .nullish(),
 });
 export type CanvasCourse = z.infer<typeof canvasCourseSchema>;
 

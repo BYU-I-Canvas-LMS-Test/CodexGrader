@@ -148,13 +148,14 @@ describe('POST /canvas/courses/list', () => {
     await withServer(app, async (base) => {
       const res = await postJson(base, '/canvas/courses/list', {});
       expect(res.status).toBe(200);
+      const card = { termName: null, imageUrl: null, needsGradingCount: null, published: true, ended: false };
       expect(res.body).toEqual({
         host: 'school.instructure.com',
         courses: [
-          { id: 3, name: 'Algebra', courseCode: 'MATH-1', enrollmentRole: 'ta' },
-          { id: 1, name: 'Biology 101', courseCode: 'BIO-101', enrollmentRole: 'teacher' },
-          { id: 2, name: 'Chemistry 201', courseCode: 'CHEM-201', enrollmentRole: 'teacher' },
-          { id: 4, name: 'Design Studio', courseCode: 'DES-9', enrollmentRole: 'designer' },
+          { id: 3, name: 'Algebra', courseCode: 'MATH-1', enrollmentRole: 'ta', ...card },
+          { id: 1, name: 'Biology 101', courseCode: 'BIO-101', enrollmentRole: 'teacher', ...card },
+          { id: 2, name: 'Chemistry 201', courseCode: 'CHEM-201', enrollmentRole: 'teacher', ...card },
+          { id: 4, name: 'Design Studio', courseCode: 'DES-9', enrollmentRole: 'designer', ...card },
         ],
       });
     });
@@ -162,6 +163,65 @@ describe('POST /canvas/courses/list', () => {
     const types = calls.map((c) => new URL(c.url).searchParams.get('enrollment_type'));
     expect(types).toEqual(['teacher', 'ta', 'designer']);
     expect(calls[0]!.headers.get('authorization')).toBe('Bearer stored-pat');
+  });
+
+  it('asks for image, needs-grading count, and term, and flags unpublished/ended courses', async () => {
+    const { app, calls } = buildApp([
+      jsonResponse([
+        {
+          id: 1,
+          name: 'Current',
+          course_code: 'CUR-1',
+          workflow_state: 'available',
+          image_download_url: 'https://school.instructure.com/courses/1/files/9/download?verifier=x',
+          needs_grading_count: 12,
+          term: { id: 7, name: 'Fall 2026', end_at: '2099-12-20T00:00:00Z' },
+        },
+        { id: 2, name: 'Draft', workflow_state: 'unpublished', image_download_url: 'http://plain.example/i.png' },
+        { id: 3, name: 'Past course date', workflow_state: 'available', end_at: '2001-01-01T00:00:00Z' },
+        {
+          id: 4,
+          name: 'Past term date',
+          workflow_state: 'available',
+          term: { name: 'Winter 2001', end_at: '2001-04-01T00:00:00Z' },
+        },
+        {
+          id: 5,
+          name: 'Extended past term',
+          workflow_state: 'available',
+          end_at: '2099-01-01T00:00:00Z',
+          term: { name: 'Winter 2001', end_at: '2001-04-01T00:00:00Z' },
+        },
+        { id: 6, name: 'Concluded', workflow_state: 'completed', needs_grading_count: 0 },
+      ]),
+      jsonResponse([]),
+      jsonResponse([]),
+    ]);
+
+    await withServer(app, async (base) => {
+      const res = await postJson(base, '/canvas/courses/list', {});
+      expect(res.status).toBe(200);
+      const rows = (res.body as { courses: Array<Record<string, unknown>> }).courses;
+      const byName = Object.fromEntries(rows.map((r) => [r.name, r]));
+      expect(byName['Current']).toMatchObject({
+        termName: 'Fall 2026',
+        imageUrl: 'https://school.instructure.com/courses/1/files/9/download?verifier=x',
+        needsGradingCount: 12,
+        published: true,
+        ended: false,
+      });
+      expect(byName['Draft']).toMatchObject({ imageUrl: null, published: false, ended: false });
+      expect(byName['Past course date']).toMatchObject({ published: true, ended: true });
+      expect(byName['Past term date']).toMatchObject({ termName: 'Winter 2001', ended: true });
+      expect(byName['Extended past term']).toMatchObject({ ended: false });
+      expect(byName['Concluded']).toMatchObject({ needsGradingCount: 0, ended: true });
+    });
+
+    for (const call of calls) {
+      const params = new URL(call.url).searchParams;
+      expect(params.get('per_page')).toBe('100');
+      expect(params.getAll('include[]')).toEqual(['course_image', 'needs_grading_count', 'term']);
+    }
   });
 
   it('rejects malformed bodies with 400', async () => {

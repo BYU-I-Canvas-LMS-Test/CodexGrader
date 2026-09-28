@@ -236,8 +236,9 @@ export class CanvasClient {
   }
 
   /**
-   * Courses the token holder can grade in (the personal-token course picker).
-   * Canvas accepts one enrollment_type per request.
+   * Courses the token holder can grade in (the personal-token course picker),
+   * with the course image, needs-grading count, and term the picker cards
+   * show. Canvas accepts one enrollment_type per request.
    */
   async listCourses(
     opts: { enrollmentType?: 'teacher' | 'ta' | 'designer' | 'student' | 'observer' } = {},
@@ -246,6 +247,7 @@ export class CanvasClient {
     const raw = await this.http.getPaginated(path, {
       enrollment_type: opts.enrollmentType ?? 'teacher',
       per_page: 100,
+      'include[]': ['course_image', 'needs_grading_count', 'term'],
     });
     return parsed(z.array(canvasCourseSchema), raw, path);
   }

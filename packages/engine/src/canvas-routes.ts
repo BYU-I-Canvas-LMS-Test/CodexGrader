@@ -9,7 +9,9 @@
 //       Canvas 401/403 → 422 {error:'invalid_token'} (the PAT is bad).
 //   POST /canvas/courses/list   {apiDomain?}
 //     → courses the token holder can grade in (enrollment types teacher, ta,
-//       designer — merged + deduped) → {courses:[{id,name,courseCode,enrollmentRole}]}.
+//       designer — merged + deduped) → {courses:[{id, name, courseCode,
+//       enrollmentRole, termName, imageUrl, needsGradingCount, published,
+//       ended}]}. The picker shows unpublished/ended courses only on request.
 //   POST /canvas/courses/verify {apiDomain?, courseId}
 //     → the caller's OWN enrollments filtered to the course; active staff
 //       seat required → {ok:true, enrollmentRole, courseName} | 403.
@@ -27,6 +29,7 @@ import {
   createCanvasClient,
   STAFF_ENROLLMENT_TYPES,
   type CanvasClient,
+  type CanvasCourse,
   type FetchLike,
 } from '@aigrader/canvas';
 import { CredentialError, type CanvasCredentialProvider } from './credentials.js';
@@ -42,6 +45,48 @@ const hostBody = z.object({
 const coursesVerifyBody = hostBody.extend({
   courseId: z.union([z.number().int().positive(), z.string().regex(/^[0-9]+$/)]),
 });
+
+// --------------------------------------------------------------- course rows --
+
+/** One course-picker card. */
+interface CourseRow {
+  id: number;
+  name: string;
+  courseCode: string | null;
+  enrollmentRole: string;
+  termName: string | null;
+  imageUrl: string | null;
+  needsGradingCount: number | null;
+  published: boolean;
+  ended: boolean;
+}
+
+/** Course images render as a plain <img> in the picker; only https passes. */
+function httpsUrlOrNull(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  try {
+    return new URL(raw).protocol === 'https:' ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+function toCourseRow(course: CanvasCourse, enrollmentRole: string, now: number): CourseRow {
+  // The course's own end date wins over its term's; a manually concluded
+  // course (workflow_state 'completed') has ended whatever its dates say.
+  const endAt = Date.parse(course.end_at ?? course.term?.end_at ?? '');
+  return {
+    id: course.id,
+    name: course.name ?? course.course_code ?? `Course ${course.id}`,
+    courseCode: course.course_code ?? null,
+    enrollmentRole,
+    termName: course.term?.name ?? null,
+    imageUrl: httpsUrlOrNull(course.image_download_url),
+    needsGradingCount: course.needs_grading_count ?? null,
+    published: course.workflow_state !== 'unpublished',
+    ended: course.workflow_state === 'completed' || endAt < now,
+  };
+}
 
 // ------------------------------------------------------------------ plumbing --
 
@@ -188,20 +233,13 @@ export function createCanvasRouter(deps: CanvasRoutesDeps): Router {
 
       // Canvas accepts one enrollment_type per request; merge + dedupe.
       // Iteration order sets role precedence: teacher > ta > designer.
-      const byId = new Map<
-        number,
-        { id: number; name: string; courseCode: string | null; enrollmentRole: string }
-      >();
+      const now = Date.now();
+      const byId = new Map<number, CourseRow>();
       for (const enrollmentType of ['teacher', 'ta', 'designer'] as const) {
         const courses = await client.listCourses({ enrollmentType });
         for (const course of courses) {
           if (byId.has(course.id)) continue;
-          byId.set(course.id, {
-            id: course.id,
-            name: course.name ?? course.course_code ?? `Course ${course.id}`,
-            courseCode: course.course_code ?? null,
-            enrollmentRole: enrollmentType,
-          });
+          byId.set(course.id, toCourseRow(course, enrollmentType, now));
         }
       }
       const courses = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));

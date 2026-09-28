@@ -8,7 +8,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // The review UI never serves remote images and never optimizes images.
+  // The review UI never optimizes images (the course picker shows Canvas
+  // course images as plain <img> tags).
   images: { unoptimized: true },
   poweredByHeader: false,
 };
