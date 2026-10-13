@@ -300,25 +300,12 @@ export const quizSubmissionsListResponseSchema = z.object({
   quiz_submissions: z.array(quizSubmissionRefSchema).nullish(),
 });
 
-/** A single answer within a quiz submission (essay answers carry text). */
-export const quizSubmissionAnswerSchema = z.object({
-  /** The QUESTION id this answer belongs to (Canvas reuses "id" here). */
-  id: z.number(),
-  /** Raw because the shape varies by question type — string for essays, arrays/objects elsewhere. */
-  answer: z.unknown(),
-});
-export type QuizSubmissionAnswer = z.infer<typeof quizSubmissionAnswerSchema>;
-
-/** Wrapper: per-submission answers nest under quiz_submission_questions. */
-export const quizSubmissionQuestionsResponseSchema = z.object({
-  quiz_submission_questions: z.array(quizSubmissionAnswerSchema).nullish(),
-});
-
 /**
- * One entry of submission_history[].submission_data (the TS predecessor's
- * confirmed quiz-answer read path). For essay questions `text` is the
- * student's full answer and `correct` is the string "undefined" (ungraded) /
- * "defined" (graded); objective types carry boolean `correct` + answer_id.
+ * One entry of submission_history[].submission_data — THE quiz-answer read
+ * path (GET /quiz_submissions/:id/questions returns `answer: null` to
+ * teachers). For essay questions `text` is the student's full answer (HTML)
+ * and `correct` is the string "undefined" (ungraded) / "defined" (graded);
+ * objective types carry boolean `correct` + answer_id.
  */
 export const quizAnswerEntrySchema = z.object({
   question_id: z.number(),

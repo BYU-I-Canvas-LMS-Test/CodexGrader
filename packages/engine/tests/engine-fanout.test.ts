@@ -5,7 +5,11 @@
 // containment, and cancel mid-run. Fake model + fake Canvas — no network,
 // ever.
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { HEIC_CONVERT_FAILED } from '@aigrader/extraction';
 import { describe, expect, it } from 'vitest';
+import type { ModelRequest } from '../src/llm/structured-client.js';
 import {
   FakeCanvas,
   TEST_CONFIG,
@@ -162,6 +166,49 @@ describe('assignment fan-out', () => {
     expect(snapshot.grades.every((g) => g.status === 'POSTED' && g.postedAt != null)).toBe(true);
   });
 
+  it('keeps the AI justification for the instructor and never posts it', async () => {
+    const NOTE = 'Thesis is clear; the second source is never cited, so Quality drops a level.';
+    const requests: ModelRequest[] = [];
+    const harness = buildEngine({
+      canvas: assignmentCanvas(),
+      modelCall: async (req) => {
+        requests.push(req);
+        return {
+          text: graderOutputJson({
+            Rubrics: [{ id: '_1', ratingID: '_r2', points: 10, ratingFeedback: 'cite both sources' }],
+            gradeJustification: `  ${NOTE}  `,
+          }),
+        };
+      },
+    });
+    const { engine, canvas, registry } = harness;
+
+    const { runId } = await engine.startRun({
+      ...START_ARGS,
+      target: { kind: 'assignment', assignmentId: 501 },
+    });
+    await engine.onIdle();
+
+    // Requested by the appended clause; the strict schema requires the field.
+    expect(requests[0]!.systemPrompt).toContain('Instructor justification:');
+    expect(requests[0]!.responseSchema.required).toContain('gradeJustification');
+
+    const doc = registry.get(runId)!.session.document;
+    for (const g of doc.grades) {
+      expect(g.aiJustification).toBe(NOTE); // trimmed, on the row
+      expect(JSON.stringify(g.aiDraft)).not.toContain(NOTE); // not in what posts
+    }
+
+    await engine.approve(runId, { all: true, approver: { canvasUserId: 9, name: 'Jane Approver' } });
+    await engine.onIdle();
+    expect(canvas.postedGrades).toHaveLength(2);
+    expect(JSON.stringify(canvas.postedGrades)).not.toContain('second source is never cited');
+
+    // The checkpoint keeps it for the review page.
+    const snapshot = await engine.getSnapshot(runId);
+    expect(snapshot.grades.every((g) => g.aiJustification === NOTE)).toBe(true);
+  });
+
   it('a transient download failure lands ONLY that row in ERROR (re-runnable)', async () => {
     const canvas = assignmentCanvas();
     canvas.files.delete('https://files.example/5.txt'); // download now fails
@@ -228,19 +275,29 @@ describe('quiz fan-out', () => {
       { id: 200, user_id: 2, attempt: null, submitted_at: null, workflow_state: 'complete' }, // no attempt № — excluded
       { id: 300, user_id: 3, attempt: 1, submitted_at: null, workflow_state: 'untaken' }, // untaken — excluded
     ];
-    canvas.quizAnswers.set(100, [
-      { id: 7, answer: '<p>Because X causes Y.</p>' },
-      { id: 9, answer: '' }, // blank ⇒ row ERROR
+    // submission_history[].submission_data for user 1's attempt 2.
+    canvas.quizAnswers.set('1:2', [
+      { question_id: 7, points: 0, correct: 'undefined', text: '<p>Because X causes Y.</p>' },
+      { question_id: 8, points: 1, correct: true, answer_id: 4 },
+      { question_id: 9, points: 0, correct: 'undefined', text: '' }, // blank ⇒ row ERROR
     ]);
     return canvas;
   }
 
   it('fans out essay questions × taken attempts and clamps scores', async () => {
+    const requests: ModelRequest[] = [];
     const harness = buildEngine({
       canvas: quizCanvas(),
-      modelCall: async () => ({
-        text: JSON.stringify({ score: 7, comment: 'good reasoning' }), // over the 5-point max
-      }),
+      modelCall: async (req) => {
+        requests.push(req);
+        return {
+          text: JSON.stringify({
+            score: 7, // over the 5-point max
+            comment: 'good reasoning',
+            gradeJustification: 'Names the cause; full marks.',
+          }),
+        };
+      },
     });
     const { engine, registry, progressStore } = harness;
 
@@ -263,14 +320,47 @@ describe('quiz fan-out', () => {
     const q7 = doc.quizGrades.find((g) => g.questionId === 7)!;
     const q9 = doc.quizGrades.find((g) => g.questionId === 9)!;
     expect(q7.status).toBe('DRAFT');
-    expect(q7.aiDraft).toMatchObject({ score: 5 }); // clamped to maxPoints
+    expect(q7.aiDraft).toEqual({ score: 5, comment: 'good reasoning' }); // clamped to maxPoints
+    expect(q7.aiJustification).toBe('Names the cause; full marks.');
+    expect(requests[0]!.systemPrompt).toContain('Instructor justification:');
     expect(q7.answerExcerpt).toBe('Because X causes Y.');
     expect(q9.status).toBe('ERROR');
     expect(q9.errorMessage).toContain('blank');
+    // Answers are read off the quiz's BACKING assignment, for the row's
+    // student and attempt.
+    expect(harness.canvas.quizAnswerReads).toContainEqual({
+      courseId: 77,
+      assignmentId: 501,
+      userId: 1,
+      attempt: 2,
+    });
 
     expect(doc.status).toBe('REVIEWING');
     expect(progressStore.last.counts).toMatchObject({ total: 2, drafted: 1, errors: 1 });
 
+    await shutdown(harness);
+  });
+
+  it('reports a missing attempt as a Canvas read problem, not a blank answer', async () => {
+    const canvas = quizCanvas();
+    canvas.quizAnswers.clear();
+    const harness = buildEngine({
+      canvas,
+      modelCall: async () => ({ text: JSON.stringify({ score: 1, comment: 'x' }) }),
+    });
+
+    const { runId } = await harness.engine.startRun({
+      ...START_ARGS,
+      target: { kind: 'quiz', assignmentId: 501, quizId: 42 },
+    });
+    await harness.engine.onIdle();
+
+    const doc = harness.registry.get(runId)!.session.document;
+    for (const g of doc.quizGrades) {
+      expect(g.status).toBe('ERROR');
+      expect(g.errorMessage).toContain('Canvas returned no quiz answers');
+      expect(g.errorMessage).not.toContain('blank');
+    }
     await shutdown(harness);
   });
 
@@ -467,5 +557,94 @@ describe('grading settings', () => {
     const harness = buildEngine();
     harness.engine.setGradeConcurrency(3);
     expect(harness.engine.gradeQueue.concurrency).toBe(3);
+  });
+});
+
+describe('HEIC photo submissions', () => {
+  // 96x64 HEIC fixture shared with the extraction suite.
+  const HEIC = readFileSync(
+    fileURLToPath(new URL('../../extraction/tests/fixtures/quadrants.heic', import.meta.url)),
+  );
+
+  function heicCanvas(bytes: Buffer): FakeCanvas {
+    const canvas = assignmentCanvas();
+    canvas.students = [student(6)];
+    canvas.submissions = [
+      textSubmission(6, '', {
+        body: null,
+        submission_type: 'online_upload',
+        attachments: [
+          {
+            id: 81,
+            filename: 'IMG_0042.HEIC',
+            display_name: 'IMG_0042.HEIC',
+            size: bytes.length,
+            'content-type': 'image/heic',
+            mime_class: 'image',
+            url: 'https://files.example/6.heic',
+            preview_url: null,
+          },
+        ],
+      }),
+    ];
+    canvas.files.set('https://files.example/6.heic', bytes);
+    return canvas;
+  }
+
+  it('grades an iPhone HEIC photo as a JPEG vision part', async () => {
+    const requests: ModelRequest[] = [];
+    const harness = buildEngine({
+      canvas: heicCanvas(HEIC),
+      modelCall: async (req) => {
+        requests.push(req);
+        return {
+          text: graderOutputJson({
+            Rubrics: [{ id: '_1', ratingID: '_r1', points: 20, ratingFeedback: 'clear photo' }],
+          }),
+        };
+      },
+    });
+
+    const { runId } = await harness.engine.startRun({
+      ...START_ARGS,
+      target: { kind: 'assignment', assignmentId: 501 },
+    });
+    await harness.engine.onIdle();
+
+    const row = harness.registry.get(runId)!.session.document.grades[0]!;
+    expect(row.status).toBe('DRAFT');
+    expect(requests).toHaveLength(1);
+    const [image] = requests[0]!.images;
+    expect(image!.mimeType).toBe('image/jpeg');
+    expect([...Buffer.from(image!.base64, 'base64').subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff]);
+    // The student's filename stays in the prompt; the vision clause applies.
+    expect(requests[0]!.userText).toContain('attached to this message: IMG_0042.HEIC');
+    expect(requests[0]!.systemPrompt).toContain('Vision input:');
+
+    await shutdown(harness);
+  });
+
+  it('errors the row with a resubmit hint when the photo will not decode', async () => {
+    let calls = 0;
+    const harness = buildEngine({
+      canvas: heicCanvas(Buffer.from('not really a photo')),
+      modelCall: async () => {
+        calls++;
+        return { text: graderOutputJson() };
+      },
+    });
+
+    const { runId } = await harness.engine.startRun({
+      ...START_ARGS,
+      target: { kind: 'assignment', assignmentId: 501 },
+    });
+    await harness.engine.onIdle();
+
+    const row = harness.registry.get(runId)!.session.document.grades[0]!;
+    expect(row.status).toBe('ERROR');
+    expect(row.errorMessage).toBe(HEIC_CONVERT_FAILED);
+    expect(calls).toBe(0);
+
+    await shutdown(harness);
   });
 });

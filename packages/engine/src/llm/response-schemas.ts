@@ -10,7 +10,9 @@
 //     JSON keys are byte-identical to the n8n/TS originals (TotalPoints,
 //     assignmentFeedback, Rubrics, id, ratingID, points, ratingFeedback,
 //     score, comment) because the verbatim prompts reference these exact
-//     names. Ids are normalized to their RAW STRING form (exact digits
+//     names. One local-tool addition: gradeJustification, the instructor-only
+//     rationale (requested by an appended prompt clause, never by editing the
+//     verbatim prompts). Ids are normalized to their RAW STRING form (exact digits
 //     preserved) mirroring the C# NumberOrStringJsonConverter — raw strings
 //     end-to-end, no unions downstream.
 //  2. Strict JSON Schema builders — handed to the model as its required
@@ -43,12 +45,19 @@ export const RubricItemSchema = z.object({
   ratingFeedback: z.string().min(1),
 });
 
+// The model's private rationale for its score, addressed to the instructor
+// (never posted to Canvas — writeback reads only the student-facing fields).
+// Optional at the gate: a missing or empty justification must never cost the
+// student a draft.
+const GradeJustificationSchema = z.string().optional();
+
 export const GraderOutputSchema = z.object({
   TotalPoints: z
     .string()
     .regex(/^\d+(\.\d+)?\/\d+(\.\d+)?$/, 'Expected "score/total" format'),
   assignmentFeedback: z.string().min(1),
   Rubrics: z.array(RubricItemSchema),
+  gradeJustification: GradeJustificationSchema,
 });
 
 export type RubricItem = z.infer<typeof RubricItemSchema>;
@@ -65,6 +74,7 @@ export const QuizQuestionGraderOutputSchema = z.object({
   // Feedback shown to the student for this question. The AI-indicator prefix
   // is added at writeback time, never here.
   comment: z.string().min(1),
+  gradeJustification: GradeJustificationSchema,
 });
 
 export type QuizQuestionGraderOutput = z.infer<typeof QuizQuestionGraderOutputSchema>;
@@ -80,6 +90,16 @@ export function clampQuizScore(score: number, maxPoints: number): number {
 }
 
 // ------------------------------------------- strict output schema (guard) --
+
+/** The instructor-only justification property, shared by both grading
+ * schemas (last, so the student-facing fields are written first). */
+const GRADE_JUSTIFICATION_PROPERTY: JsonSchema = {
+  type: 'string',
+  description:
+    'Private note to the instructor (never shown to the student): why this score, ' +
+    'citing the specific evidence that earned or cost points, plus anything the ' +
+    'instructor should verify before accepting the grade.',
+};
 
 /** One rubric-snapshot criterion's ids, EXACTLY as Canvas sent them (raw strings). */
 export type ResponseSchemaCriterion = {
@@ -144,8 +164,9 @@ export function buildGradeSubmissionResponseSchema(
           additionalProperties: false,
         },
       },
+      gradeJustification: GRADE_JUSTIFICATION_PROPERTY,
     },
-    required: ['TotalPoints', 'assignmentFeedback', 'Rubrics'],
+    required: ['TotalPoints', 'assignmentFeedback', 'Rubrics', 'gradeJustification'],
     additionalProperties: false,
   };
 }
@@ -166,8 +187,9 @@ export function buildQuizQuestionResponseSchema(): JsonSchema {
         type: 'string',
         description: 'Concise, evidence-anchored feedback comment for the student.',
       },
+      gradeJustification: GRADE_JUSTIFICATION_PROPERTY,
     },
-    required: ['score', 'comment'],
+    required: ['score', 'comment', 'gradeJustification'],
     additionalProperties: false,
   };
 }

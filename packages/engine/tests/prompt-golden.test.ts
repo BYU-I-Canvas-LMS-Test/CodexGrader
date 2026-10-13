@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseCourseProfile, renderCourseProfileText } from '@aigrader/shared';
 import {
+  GRADER_JUSTIFICATION_CLAUSE,
   GRADER_MIXED_ID_CLAUSE,
   GRADER_SYSTEM_PROMPT,
   GRADER_VISION_CLAUSE,
@@ -18,8 +19,10 @@ import {
 } from '../src/grading/prompts/system-prompt.js';
 import { buildUserMessage } from '../src/grading/prompts/user-template.js';
 import {
+  QUIZ_JUSTIFICATION_CLAUSE,
   QUIZ_QUESTION_SYSTEM_PROMPT,
   buildQuizQuestionUserMessage,
+  composeQuizSystemPrompt,
 } from '../src/grading/prompts/quiz-prompt.js';
 
 describe('grader system prompt', () => {
@@ -81,6 +84,26 @@ describe('grader system prompt', () => {
     // No clauses → the verbatim prompt and nothing else.
     expect(composeSystemPrompt({ vision: false, mixedRubricIds: false })).toBe(
       GRADER_SYSTEM_PROMPT,
+    );
+  });
+
+  it('appends the instructor-justification clause last, leaving the verbatim prompt intact', () => {
+    expect(GRADER_JUSTIFICATION_CLAUSE).toBe(
+      '\n\nInstructor justification:\n' +
+        '- Also return gradeJustification: a brief note to the instructor, never shown to the student, explaining why the submission earned this score.\n' +
+        '- For each criterion that lost points or was a close call between ratings, name the specific evidence (or missing evidence) that decided it.\n' +
+        '- Point out anything the instructor should check before accepting the grade, such as content you could not read or a borderline rating.\n' +
+        '- Write it plainly for the instructor; stylistic instructions apply to student feedback, not to this note.\n' +
+        '- State conclusions and evidence only; this is not a step-by-step account of your reasoning.',
+    );
+    expect(composeSystemPrompt({ vision: true, mixedRubricIds: true, justification: true })).toBe(
+      GRADER_SYSTEM_PROMPT +
+        GRADER_VISION_CLAUSE +
+        GRADER_MIXED_ID_CLAUSE +
+        GRADER_JUSTIFICATION_CLAUSE,
+    );
+    expect(composeSystemPrompt({ vision: false, mixedRubricIds: false, justification: true })).toBe(
+      GRADER_SYSTEM_PROMPT + GRADER_JUSTIFICATION_CLAUSE,
     );
   });
 });
@@ -280,6 +303,17 @@ describe('quiz prompts', () => {
       "The score must be between 0 and the question's maximum point value, inclusive.",
     );
     expect(QUIZ_QUESTION_SYSTEM_PROMPT.endsWith('- Return valid JSON only.')).toBe(true);
+
+    // As sent: the verbatim prompt, then the justification clause.
+    expect(composeQuizSystemPrompt()).toBe(QUIZ_QUESTION_SYSTEM_PROMPT + QUIZ_JUSTIFICATION_CLAUSE);
+    expect(QUIZ_JUSTIFICATION_CLAUSE).toBe(
+      '\n\nInstructor justification:\n' +
+        '- Also return gradeJustification: a brief note to the instructor, never shown to the student, explaining why the answer earned this score.\n' +
+        '- Name the specific parts of the answer (or what is missing) that earned or cost points, relative to the question prompt and any author-provided guidance.\n' +
+        '- Point out anything the instructor should check before accepting the grade, such as a borderline score or an answer that can reasonably be read more than one way.\n' +
+        '- Write it plainly for the instructor; stylistic instructions apply to student feedback, not to this note.\n' +
+        '- State conclusions and evidence only; this is not a step-by-step account of your reasoning.',
+    );
   });
 
   it('assembles the quiz user message with stable headers, HTML-stripped question, and guidance folding (QuizUserMessageAssembles)', () => {

@@ -90,6 +90,29 @@ export function isImageAttachment(
   return IMAGE_MEDIA_TYPES_BY_EXTENSION.has(previewFileExtension(filename));
 }
 
+// HEIC/HEIF (the iPhone camera default). Not a vision-native type and not
+// renderable by Chrome/Edge, so it is deliberately NOT in the lists above:
+// the engine converts it to JPEG (@aigrader/extraction convertHeicToJpeg)
+// before grading and before streaming it to the viewer inline.
+export const HEIC_EXTENSIONS: ReadonlySet<string> = new Set<string>(['.heic', '.heif']);
+
+export const HEIC_MEDIA_TYPES: ReadonlySet<string> = new Set<string>([
+  'image/heic',
+  'image/heif',
+  'image/heic-sequence',
+  'image/heif-sequence',
+]);
+
+/** True for a HEIC/HEIF photo (MIME or extension; Canvas often reports
+ * octet-stream). */
+export function isHeicAttachment(
+  mime: string | null | undefined,
+  filename: string | null | undefined,
+): boolean {
+  if (mime != null && HEIC_MEDIA_TYPES.has(mime.toLowerCase())) return true;
+  return HEIC_EXTENSIONS.has(previewFileExtension(filename));
+}
+
 // ------------------------------------------------------------ classification --
 
 /** How the viewer should render one attachment (C# PreviewKind). */
@@ -143,7 +166,11 @@ export function classifyPreview(
   const mime = (contentType ?? '').toLowerCase();
   const ext = previewFileExtension(filename);
 
-  if (isImageAttachment(contentType, filename)) return 'image';
+  // HEIC is an image to the viewer: the engine's /preview/file streams it
+  // converted to JPEG (the raw bytes still stream as octet-stream below).
+  if (isImageAttachment(contentType, filename) || isHeicAttachment(contentType, filename)) {
+    return 'image';
+  }
   if (ext === '.pdf' || mime === 'application/pdf') return 'pdf';
   if (ext === '.docx' || mime === DOCX_MIME) return 'rich-html';
   if (ext === '.pptx' || mime === PPTX_MIME) return 'slides';

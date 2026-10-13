@@ -20,6 +20,8 @@
   "dependencies": {
     "@aigrader/shared": "workspace:*",
     "exceljs": "^4.4.0",
+    "heic-decode": "2.1.0",
+    "jpeg-js": "0.4.4",
     "mammoth": "^1.8.0",
     "papaparse": "^5.4.0",
     "parse5": "^7.2.0",

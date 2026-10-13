@@ -8,8 +8,8 @@ import type {
   CanvasSubmission,
   CourseUser,
   DiscussionEntry,
+  QuizAnswerEntry,
   QuizQuestion,
-  QuizSubmissionAnswer,
   QuizSubmissionRef,
   RunListEntry,
 } from '@aigrader/canvas';
@@ -146,8 +146,10 @@ export class FakeCanvas implements EngineCanvasPort {
   students: CourseUser[] = [];
   quizQuestions: QuizQuestion[] = [];
   quizSubmissions: QuizSubmissionRef[] = [];
-  /** quizSubmissionId → answers. */
-  quizAnswers = new Map<number, QuizSubmissionAnswer[]>();
+  /** `${userId}:${attempt}` → that attempt's submission_data entries. */
+  quizAnswers = new Map<string, QuizAnswerEntry[]>();
+  /** Every answer read, as the grader asked for it. */
+  quizAnswerReads: Array<{ courseId: number; assignmentId: number; userId: number; attempt?: number }> = [];
   discussionEntries: DiscussionEntry[] = [];
   /** url → bytes; a missing url throws (transient download failure). */
   files = new Map<string, Buffer>();
@@ -191,8 +193,14 @@ export class FakeCanvas implements EngineCanvasPort {
     return this.quizSubmissions;
   }
 
-  async getQuizSubmissionAnswers(quizSubmissionId: number): Promise<QuizSubmissionAnswer[]> {
-    return this.quizAnswers.get(quizSubmissionId) ?? [];
+  async getQuizSubmissionAnswersFromHistory(
+    courseId: number,
+    assignmentId: number,
+    userId: number,
+    attempt?: number,
+  ): Promise<QuizAnswerEntry[]> {
+    this.quizAnswerReads.push({ courseId, assignmentId, userId, attempt });
+    return this.quizAnswers.get(`${userId}:${attempt}`) ?? [];
   }
 
   async getDiscussionEntries(): Promise<DiscussionEntry[]> {

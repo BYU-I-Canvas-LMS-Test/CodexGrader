@@ -9,7 +9,10 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild"
-    ]
+    ],
+    "overrides": {
+      "libheif-js": "1.19.8"
+    }
   },
   "scripts": {
     "build": "pnpm -r --filter \"@aigrader/*\" build",

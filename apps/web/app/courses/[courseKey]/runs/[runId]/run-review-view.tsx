@@ -66,6 +66,8 @@ type StudentRow = {
   excerptTruncated: boolean;
   aiDraft: Draft | null;
   facultyEdited: Draft | null;
+  /** The AI's instructor-only justification of aiDraft (never posted). */
+  aiJustification?: string;
   errorMessage: string | null;
   postedAt: string | null;
 };
@@ -82,6 +84,8 @@ type QuizRow = {
   answerExcerpt: string | null;
   aiDraft: QuizDraft | null;
   facultyEdited: QuizDraft | null;
+  /** The AI's instructor-only justification of aiDraft (never posted). */
+  aiJustification?: string;
   errorMessage: string | null;
   postedAt: string | null;
 };
@@ -514,6 +518,33 @@ function WillPostAs({ facultyName }: { facultyName: string }) {
   );
 }
 
+/** The AI's justification of its draft, written to the instructor. Review
+ * page only: it is never posted (writeback sends the student-facing fields
+ * alone). Absent on drafts made before the feature, so it renders nothing. */
+function AiJustification({ text, edited }: { text?: string; edited: boolean }) {
+  if (!text || text.trim() === '') return null;
+  return (
+    <details className="ai-why" open>
+      <summary>
+        <I.Sparkle w={14} h={14} stroke="var(--blue-600)" />
+        Why the AI gave this grade
+        <span className="ai-why-private" title="This note is never posted to Canvas.">
+          Only you see this
+        </span>
+        <I.ChevDown w={14} h={14} className="ai-why-chev" />
+      </summary>
+      <div className="ai-why-body">
+        {text}
+        {edited ? (
+          <span className="ai-why-stale">
+            This explains the AI&apos;s original draft; your edits may differ from it.
+          </span>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
 // ------------------------------------------------------- assignment review --
 
 type SharedProps = {
@@ -910,6 +941,14 @@ function AssignmentReview(props: SharedProps) {
                           </div>
                         </div>
 
+                        <AiJustification
+                          key={current.canvasUserId}
+                          text={current.aiJustification}
+                          edited={
+                            current.facultyEdited != null || edits[current.canvasUserId] != null
+                          }
+                        />
+
                         <table className="rubric-tbl">
                           <thead>
                             <tr>
@@ -1098,7 +1137,9 @@ function QuizReview(props: SharedProps & { run: RunDoc }) {
           body: JSON.stringify({
             courseKey,
             kind: 'quiz-answer',
-            quizSubmissionId: q.quizSubmissionId,
+            assignmentId: run.canvasAssignmentId,
+            userId: q.canvasUserId,
+            attempt: q.attempt,
             questionId: q.questionId,
           }),
         });
@@ -1113,7 +1154,7 @@ function QuizReview(props: SharedProps & { run: RunDoc }) {
         setLoadingFull((m) => ({ ...m, [key]: false }));
       }
     },
-    [courseKey],
+    [courseKey, run.canvasAssignmentId],
   );
 
   const current = groups[Math.min(idx, Math.max(groups.length - 1, 0))];
@@ -1339,6 +1380,15 @@ function QuizReview(props: SharedProps & { run: RunDoc }) {
                                   </div>
                                 </div>
                                 <div style={{ marginTop: 20 }}>
+                                  <AiJustification
+                                    text={q.aiJustification}
+                                    edited={
+                                      q.facultyEdited != null ||
+                                      edits[current.quizSubmissionId]?.[q.questionId] != null
+                                    }
+                                  />
+                                </div>
+                                <div>
                                   <label className="lbl">Feedback</label>
                                   <textarea
                                     className="textarea"

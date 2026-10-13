@@ -49,6 +49,11 @@ describe('classifyPreview (ClassifyCore port)', () => {
     ['application/octet-stream', 'essay.rtf', 'unsupported'],
     // Legacy .doc stays unsupported (download-only card — no pure-JS converter).
     [null, 'old.doc', 'unsupported'],
+    // iPhone photos: shown as images (the engine streams them as JPEG).
+    ['image/heic', 'IMG_0042.HEIC', 'image'],
+    ['application/octet-stream', 'IMG_0042.heic', 'image'],
+    [null, 'scan.heif', 'image'],
+    ['image/heif', 'photo', 'image'],
   ])('classifies by extension first: (%s, %s) → %s', (mime, filename, expected) => {
     expect(classifyPreview(mime, filename)).toBe(expected);
   });
@@ -77,6 +82,8 @@ describe('safeInlineContentType (SafeInlineContentType port)', () => {
       'application/octet-stream',
     ],
     ['application/x-msdownload', 'tool.exe', 'application/octet-stream'],
+    // Raw HEIC bytes never ride inline — only the engine's converted JPEG does.
+    ['image/heic', 'IMG_0042.HEIC', 'application/octet-stream'],
   ])('inline content type is allowlisted: (%s, %s) → %s', (mime, filename, expected) => {
     expect(safeInlineContentType(mime, filename)).toBe(expected);
   });

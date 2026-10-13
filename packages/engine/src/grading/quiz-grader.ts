@@ -7,7 +7,7 @@
 // question's point range. Mirrors GraderAgent's status/error/cancel
 // conventions.
 
-import type { QuizSubmissionAnswer } from '@aigrader/canvas';
+import type { QuizAnswerEntry } from '@aigrader/canvas';
 import type { CourseSettingsProfile } from '@aigrader/shared';
 import { renderCourseProfileText } from '@aigrader/shared';
 import type { GradingLlm } from '../llm/structured-client.js';
@@ -15,14 +15,21 @@ import { clampQuizScore } from '../llm/response-schemas.js';
 import type { RunSession } from '../coordinator/run-session.js';
 import { pauseSignalOf, type PauseSignal } from '../coordinator/pause.js';
 import {
-  QUIZ_QUESTION_SYSTEM_PROMPT,
   buildQuizQuestionUserMessage,
+  composeQuizSystemPrompt,
 } from './prompts/quiz-prompt.js';
 import { stripHtml } from './prompts/strip-html.js';
 import { EXCERPT_LENGTH } from './grader-agent.js';
 
 export interface QuizCanvasPort {
-  getQuizSubmissionAnswers(quizSubmissionId: number): Promise<QuizSubmissionAnswer[]>;
+  /** Answers from the backing assignment's submission_history (the only
+   * read path that returns answer text to a teacher token). */
+  getQuizSubmissionAnswersFromHistory(
+    courseId: number,
+    backingAssignmentId: number,
+    userId: number,
+    attempt?: number,
+  ): Promise<QuizAnswerEntry[]>;
 }
 
 export interface QuizGraderDeps {
@@ -80,13 +87,27 @@ export class QuizGraderAgent {
         throw new Error(`Question ${questionId} missing from the run snapshot.`);
       }
 
-      // The student's answer: essays arrive as a JSON string in the
-      // per-submission answers payload. Quiz-submission ids are per-instance,
-      // so the engine bound `canvas` to the run's domain already.
-      const answers = await this.deps.canvas.getQuizSubmissionAnswers(quizSubmissionId);
-      const answer = answers.find((a) => a.id === questionId);
-      const answerText =
-        typeof answer?.answer === 'string' ? stripHtml(answer.answer) : '';
+      // The student's answer: the quiz's backing assignment submission
+      // carries per-attempt submission_data (essay `text` is HTML). The
+      // engine bound `canvas` to the run's domain already.
+      const row = doc.quizGrades.find(
+        (g) => g.quizSubmissionId === quizSubmissionId && g.questionId === questionId,
+      );
+      const attempt = row?.attempt ? row.attempt : undefined;
+      const answers = await this.deps.canvas.getQuizSubmissionAnswersFromHistory(
+        doc.canvasCourseId,
+        doc.canvasAssignmentId,
+        item.canvasUserId,
+        attempt,
+      );
+      if (answers.length === 0) {
+        throw new Error(
+          `Canvas returned no quiz answers for this student's attempt ${attempt ?? '(latest)'}. ` +
+            'Re-run the student; if it repeats, check the attempt in SpeedGrader.',
+        );
+      }
+      const answer = answers.find((a) => a.question_id === questionId);
+      const answerText = stripHtml(answer?.text ?? '');
 
       if (answerText.trim() === '') {
         throw new Error('The student left this question blank (no answer text).');
@@ -116,7 +137,7 @@ export class QuizGraderAgent {
       });
 
       const result = await this.deps.llm.gradeQuizQuestion({
-        systemPrompt: QUIZ_QUESTION_SYSTEM_PROMPT,
+        systemPrompt: composeQuizSystemPrompt(),
         userMessage,
         model: this.deps.config.model,
         reasoningEffort: this.deps.config.reasoningEffort,
@@ -129,6 +150,8 @@ export class QuizGraderAgent {
 
       session.updateQuizGrade(quizSubmissionId, questionId, (g) => {
         g.aiDraft = { score, comment: result.output.comment };
+        // Instructor-only; replaced with every new draft (absent = none).
+        g.aiJustification = result.output.gradeJustification?.trim() || undefined;
         if (g.facultyEdited != null) g.staleEdit = true;
         g.errorKind = undefined;
         g.status = g.facultyEdited != null ? 'EDITED' : 'DRAFT';

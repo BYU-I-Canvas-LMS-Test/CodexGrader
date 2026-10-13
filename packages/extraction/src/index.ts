@@ -29,6 +29,14 @@ export { extractXlsx, loadWorkbook, formatCellValue, type XlsxExtractResult } fr
 // drift; the canonical copies live in @aigrader/shared/preview).
 export { TEXT_AND_CODE_EXTENSIONS, IMAGE_EXTENSIONS, fileExtension } from './extensions.js';
 
+// HEIC/HEIF photos → JPEG, for the vision grading path and the viewer.
+export {
+  convertHeicToJpeg,
+  HEIC_CONVERT_FAILED,
+  HEIC_JPEG_QUALITY,
+  HEIC_MAX_EDGE,
+} from './heic.js';
+
 // Submission-viewer conversions (M5): the canonical allowlist sanitizer and
 // the DOCX/RTF → sanitized HTML + Excel-like grid renderers the engine's
 // /preview endpoints serve. The web tier only ever RECEIVES this output.

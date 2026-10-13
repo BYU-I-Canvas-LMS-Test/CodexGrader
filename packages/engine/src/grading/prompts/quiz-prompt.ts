@@ -42,6 +42,23 @@ Rules:
 - If stylistic instructions conflict with clarity or professionalism, prioritize clarity and professionalism.
 - Return valid JSON only.`;
 
+// Justification clause — local tool, appended after the verbatim prompt
+// (never edited into it); the quiz twin of GRADER_JUSTIFICATION_CLAUSE.
+export const QUIZ_JUSTIFICATION_CLAUSE = `
+
+Instructor justification:
+- Also return gradeJustification: a brief note to the instructor, never shown to the student, explaining why the answer earned this score.
+- Name the specific parts of the answer (or what is missing) that earned or cost points, relative to the question prompt and any author-provided guidance.
+- Point out anything the instructor should check before accepting the grade, such as a borderline score or an answer that can reasonably be read more than one way.
+- Write it plainly for the instructor; stylistic instructions apply to student feedback, not to this note.
+- State conclusions and evidence only; this is not a step-by-step account of your reasoning.`;
+
+/** The quiz system prompt as sent: the verbatim prompt, then the
+ * justification clause. */
+export function composeQuizSystemPrompt(): string {
+  return QUIZ_QUESTION_SYSTEM_PROMPT + QUIZ_JUSTIFICATION_CLAUSE;
+}
+
 export type BuildQuizQuestionMessageArgs = {
   courseProfileText: string;
   questionName: string;

@@ -372,7 +372,7 @@ describe('gradeQuizQuestion', () => {
     expect(result.stats.model).toBe('test-model-quiz');
 
     const schema = calls[0]!.responseSchema;
-    expect(Object.keys(schema.properties!)).toEqual(['score', 'comment']);
+    expect(Object.keys(schema.properties!)).toEqual(['score', 'comment', 'gradeJustification']);
     expect(calls[0]!.systemPrompt).toBe('QSYS');
   });
 

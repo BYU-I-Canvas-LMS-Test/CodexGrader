@@ -46,8 +46,6 @@ import {
   lenientNullableNumber,
   outcomeGroupLinkSchema,
   quizQuestionSchema,
-  quizSubmissionAnswerSchema,
-  quizSubmissionQuestionsResponseSchema,
   quizSubmissionRefSchema,
 } from './types.js';
 import type {
@@ -65,7 +63,6 @@ import type {
   DiscussionEntry,
   QuizAnswerEntry,
   QuizQuestion,
-  QuizSubmissionAnswer,
   QuizSubmissionRef,
 } from './types.js';
 
@@ -385,26 +382,22 @@ export class CanvasClient {
   }
 
   /**
-   * One student's per-question answers for a quiz attempt, via
-   * GET /quiz_submissions/:id/questions (requires grading rights on the
-   * course). Ported from: CanvasApiClient.cs GetQuizSubmissionAnswersAsync.
-   */
-  async getQuizSubmissionAnswers(quizSubmissionId: Id): Promise<QuizSubmissionAnswer[]> {
-    const path = `/api/v1/quiz_submissions/${quizSubmissionId}/questions`;
-    const wrapped = parsed(
-      quizSubmissionQuestionsResponseSchema,
-      await this.http.getJson(path),
-      path,
-    );
-    return parsed(z.array(quizSubmissionAnswerSchema), wrapped.quiz_submission_questions ?? [], path);
-  }
-
-  /**
-   * Alternate quiz-answer read path (the TS predecessor's confirmed route,
-   * lifted from lib\canvas\client.ts getQuizSubmissionAnswers): the backing
-   * assignment submission's submission_history[].submission_data, read with
-   * a teacher token. When `attempt` is given, returns that attempt's entries;
-   * otherwise the latest history entry that has submission_data.
+   * One student's per-question answers for a classic-quiz attempt: the
+   * backing assignment submission's submission_history[].submission_data,
+   * read with a teacher token (the TS predecessor's spike-confirmed route,
+   * lifted from lib\canvas\client.ts getQuizSubmissionAnswers). For essays,
+   * `text` is the student's full answer as HTML.
+   *
+   * Do NOT read answers from GET /quiz_submissions/:id/questions: for a
+   * teacher token Canvas returns every question with `answer: null`, so
+   * every essay looks blank (the C# app's route, and the cause of its
+   * "student left this question blank" errors).
+   *
+   * With `attempt`, returns that attempt's entries (the latest version of it
+   * — a regrade can re-version one attempt). When no version carries that
+   * attempt number but the history holds exactly one attempt, that one is
+   * returned (unambiguous); otherwise []. Without `attempt`, the latest
+   * history entry that has submission_data.
    */
   async getQuizSubmissionAnswersFromHistory(
     courseId: Id,
@@ -417,11 +410,11 @@ export class CanvasClient {
     });
     const history = sub?.submission_history ?? [];
     const candidates = history.filter((h) => (h.submission_data?.length ?? 0) > 0);
-    const entry =
-      attempt != null
-        ? candidates.find((h) => h.attempt === attempt)
-        : candidates[candidates.length - 1];
-    return entry?.submission_data ?? [];
+    if (attempt == null) return candidates.at(-1)?.submission_data ?? [];
+    const exact = candidates.filter((h) => h.attempt === attempt).at(-1);
+    if (exact) return exact.submission_data ?? [];
+    const attempts = new Set(candidates.map((h) => h.attempt));
+    return attempts.size === 1 ? (candidates.at(-1)?.submission_data ?? []) : [];
   }
 
   // --------------------------------------------------------------- roster --

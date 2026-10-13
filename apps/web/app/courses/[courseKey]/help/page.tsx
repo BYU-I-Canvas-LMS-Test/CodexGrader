@@ -478,6 +478,11 @@ export default async function HelpPage({
                     badge to <i>Edited</i>.
                   </li>
                   <li>
+                    <b>Why the AI gave this grade</b> is the AI&apos;s explanation written to you:
+                    the evidence behind each deduction and anything it wants you to double-check
+                    before you approve. Only you see it; it is never posted to Canvas.
+                  </li>
+                  <li>
                     <b>Overall feedback</b> is the comment that will post, previewed exactly as
                     students will see it: <i>{REVIEWED_PREFIX} …</i>
                   </li>
@@ -633,7 +638,8 @@ export default async function HelpPage({
                   Excel-skills rubrics grade: cell formatting (fills, bold, font and size,
                   alignment), column widths, freeze panes, merged cells, worksheet names, and
                   formulas — including whether a formula was filled down a range. Image files (JPG,
-                  PNG, GIF, WebP) are graded visually, so photographed handwritten work counts too.
+                  PNG, GIF, WebP, and iPhone HEIC photos) are graded visually, so photographed
+                  handwritten work counts too.
                   When a student turns in several files, all of them are read and graded together.
                 </p>
               </div>

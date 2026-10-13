@@ -11,8 +11,8 @@
 //   'preview' | 'docx-html'
 //     | 'rtf-html' | 'grid'     → /preview/convert {…, attachmentId,
 //                                  sheetIndex?, showFormulas?, allRows?}
-//   'quiz-answer'               → /preview/quiz-answer {quizSubmissionId,
-//                                  questionId}
+//   'quiz-answer'               → /preview/quiz-answer {assignmentId, userId,
+//                                  attempt?, questionId}
 
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireCourseStaff } from '../../../lib/auth/resolve-context';
@@ -45,21 +45,26 @@ export async function POST(req: NextRequest) {
   if (!access.ok) return access.response;
   const base = courseEngineParams(access.ctx);
 
-  if (kind === 'quiz-answer') {
-    const quizSubmissionId = positiveInt(body.quizSubmissionId);
-    const questionId = positiveInt(body.questionId);
-    if (quizSubmissionId === null || questionId === null) {
-      return bad('quizSubmissionId and questionId are required.');
-    }
-    return proxyResponse(
-      await engineFetch('/preview/quiz-answer', { ...base, quizSubmissionId, questionId }),
-    );
-  }
-
   const assignmentId = positiveInt(body.assignmentId);
   const userId = positiveInt(body.userId);
   if (assignmentId === null || userId === null) {
     return bad('assignmentId and userId are required.');
+  }
+
+  if (kind === 'quiz-answer') {
+    // Quiz answers are read off the quiz's backing assignment submission.
+    const questionId = positiveInt(body.questionId);
+    if (questionId === null) return bad('questionId is required.');
+    const attempt = positiveInt(body.attempt);
+    return proxyResponse(
+      await engineFetch('/preview/quiz-answer', {
+        ...base,
+        assignmentId,
+        userId,
+        questionId,
+        ...(attempt !== null ? { attempt } : {}),
+      }),
+    );
   }
 
   if (kind === 'submission') {

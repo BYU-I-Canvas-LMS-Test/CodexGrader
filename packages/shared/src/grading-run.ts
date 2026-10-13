@@ -230,6 +230,11 @@ export const StudentGradeSchema = z
     /** Local tool: true when facultyEdited predates the current AI draft (the
      * row was re-run after being edited) — the reviewer keeps or discards it. */
     staleEdit: z.boolean().optional(),
+    /** Local tool: the AI's justification of aiDraft, written to the
+     * instructor. Shown only in the review page — never posted to Canvas
+     * (writeback reads the draft's student-facing fields only). Replaced
+     * whenever a new AI draft lands. */
+    aiJustification: z.string().optional(),
   })
   .passthrough();
 export type StudentGrade = z.infer<typeof StudentGradeSchema>;
@@ -266,6 +271,9 @@ export const QuizQuestionGradeEntrySchema = z
     /** Local tool: true when facultyEdited predates the current AI draft (the
      * row was re-run after being edited) — the reviewer keeps or discards it. */
     staleEdit: z.boolean().optional(),
+    /** Local tool: the AI's instructor-only justification of aiDraft (see
+     * StudentGradeSchema.aiJustification). Never posted to Canvas. */
+    aiJustification: z.string().optional(),
   })
   .passthrough();
 export type QuizQuestionGradeEntry = z.infer<typeof QuizQuestionGradeEntrySchema>;

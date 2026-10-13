@@ -293,3 +293,66 @@ describe('getSelfEnrollments (PAT course-link verification)', () => {
     expect(url.searchParams.has('type[]')).toBe(false);
   });
 });
+
+describe('quiz answers (submission_history read path)', () => {
+  const essay = (text: string) => [{ question_id: 7, points: 0, correct: 'undefined', text }];
+  const historyResponse = (history: unknown[]) =>
+    jsonResponse({ id: 5, user_id: 555, submission_history: history });
+
+  it("reads the backing assignment's submission_history for the requested attempt", async () => {
+    const { fetchImpl, calls } = makeFetch([
+      historyResponse([
+        { attempt: 1, submission_data: essay('<p>first try</p>') },
+        { attempt: 2, submission_data: essay('<p>second try</p>') },
+        { attempt: 3, submission_data: null }, // started, nothing submitted
+      ]),
+    ]);
+
+    const answers = await client(fetchImpl).getQuizSubmissionAnswersFromHistory(9, 101, 555, 1);
+
+    expect(answers[0]?.text).toBe('<p>first try</p>');
+    const url = new URL(calls[0].url);
+    expect(url.pathname).toBe('/api/v1/courses/9/assignments/101/submissions/555');
+    expect(url.searchParams.getAll('include[]')).toEqual(['submission_history']);
+  });
+
+  it('prefers the latest version of a re-versioned attempt', async () => {
+    const { fetchImpl } = makeFetch([
+      historyResponse([
+        { attempt: 2, submission_data: essay('<p>as submitted</p>') },
+        { attempt: 2, submission_data: essay('<p>after regrade</p>') },
+      ]),
+    ]);
+    const answers = await client(fetchImpl).getQuizSubmissionAnswersFromHistory(9, 101, 555, 2);
+    expect(answers[0]?.text).toBe('<p>after regrade</p>');
+  });
+
+  it('falls back only when the history holds a single, unambiguous attempt', async () => {
+    const single = makeFetch([historyResponse([{ attempt: 1, submission_data: essay('<p>only</p>') }])]);
+    const one = await client(single.fetchImpl).getQuizSubmissionAnswersFromHistory(9, 101, 555, 4);
+    expect(one[0]?.text).toBe('<p>only</p>');
+
+    const several = makeFetch([
+      historyResponse([
+        { attempt: 1, submission_data: essay('<p>a</p>') },
+        { attempt: 2, submission_data: essay('<p>b</p>') },
+      ]),
+    ]);
+    // Never guess between two different attempts.
+    await expect(
+      client(several.fetchImpl).getQuizSubmissionAnswersFromHistory(9, 101, 555, 4),
+    ).resolves.toEqual([]);
+  });
+
+  it('returns the latest attempt with answers when no attempt is given', async () => {
+    const { fetchImpl } = makeFetch([
+      historyResponse([
+        { attempt: 1, submission_data: essay('<p>a</p>') },
+        { attempt: 2, submission_data: essay('<p>b</p>') },
+        { attempt: 3, submission_data: [] },
+      ]),
+    ]);
+    const answers = await client(fetchImpl).getQuizSubmissionAnswersFromHistory(9, 101, 555);
+    expect(answers[0]?.text).toBe('<p>b</p>');
+  });
+});

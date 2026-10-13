@@ -13,8 +13,9 @@
 //        no-cross-course/no-SSRF construction as the C# controller), resolves
 //        a FRESH signed URL, and returns the raw bytes with the inline
 //        content-type ALLOWLIST applied (application/pdf + png/jpeg/gif/webp;
-//        everything else octet-stream). 404 attachment gone / 413 over the
-//        50 MB cap / 502 Canvas refused.
+//        everything else octet-stream). HEIC/HEIF photos view inline as a
+//        converted JPEG (downloads keep the original). 404 attachment gone /
+//        413 over the 50 MB cap / 502 Canvas refused.
 //   POST /preview/convert {…, attachmentId, kind, sheetIndex?, showFormulas?,
 //        allRows?} → server-side conversions as JSON: kind 'preview' (classify
 //        + build: text / table shell / RTF→HTML / unsupported), 'docx-html'
@@ -22,8 +23,9 @@
 //        'grid' (one worksheet as Excel-like grid HTML, 500-row default /
 //        2,000 cap). Conversion failures come back as friendly payload errors
 //        (200), matching the C# AttachmentPreview.Error contract.
-//   POST /preview/quiz-answer {…, quizSubmissionId, questionId} → the
-//        student's full formatted essay answer, sanitized ('' when Canvas has
+//   POST /preview/quiz-answer {…, assignmentId, userId, attempt?, questionId}
+//        → the student's full formatted essay answer from the quiz's backing
+//        assignment submission_history, sanitized ('' when Canvas has
 //        nothing richer than the stored excerpt).
 //
 // Ported from: C:\Devs\AIGrader-C#\src\AiGrader\Services\Viewing\SubmissionPreviewService.cs
@@ -43,19 +45,21 @@ import {
   CanvasError,
   type CanvasAttachment,
   type CanvasSubmission,
-  type QuizSubmissionAnswer,
+  type QuizAnswerEntry,
 } from '@aigrader/canvas';
 import {
   MAX_PREVIEW_BYTES,
   classifyPreview,
   csvDelimiterFor,
   isCsvLike,
+  isHeicAttachment,
   safeInlineContentType,
 } from '@aigrader/shared/preview';
 import {
   INITIAL_ROWS_PER_SHEET,
   MAX_ROWS_PER_SHEET,
   convertDocxHtml,
+  convertHeicToJpeg,
   convertRtfHtml,
   createColorResolver,
   isRtfAttachment,
@@ -108,8 +112,9 @@ const convertBody = submissionBody.extend({
   allRows: z.boolean().default(false),
 });
 
-const quizAnswerBody = baseBody.extend({
-  quizSubmissionId: z.number().int().positive(),
+const quizAnswerBody = submissionBody.extend({
+  /** The quiz attempt (absent/0 = the latest attempt with answers). */
+  attempt: z.number().int().nonnegative().optional(),
   questionId: z.number().int().positive(),
 });
 
@@ -122,7 +127,12 @@ export interface PreviewCanvasPort {
     userId: number,
   ): Promise<CanvasSubmission | null>;
   downloadUrl(url: string): Promise<Buffer>;
-  getQuizSubmissionAnswers(quizSubmissionId: number): Promise<QuizSubmissionAnswer[]>;
+  getQuizSubmissionAnswersFromHistory(
+    courseId: number,
+    backingAssignmentId: number,
+    userId: number,
+    attempt?: number,
+  ): Promise<QuizAnswerEntry[]>;
 }
 
 export interface PreviewRouteClients {
@@ -283,6 +293,7 @@ export function createPreviewRouter(deps: PreviewRoutesDeps): Router {
   );
   const submissionCache = new TtlCache<CanvasSubmission>(Number.MAX_SAFE_INTEGER, now);
   const convertCache = new TtlCache<Record<string, unknown>>(64 * 1024 * 1024, now);
+  const heicJpegCache = new TtlCache<Buffer>(64 * 1024 * 1024, now);
 
   /** Resolve body → canvas client (one shape for every route). */
   async function resolve(req: Request) {
@@ -356,6 +367,27 @@ export function createPreviewRouter(deps: PreviewRoutesDeps): Router {
     return { status: 'ok', attachment, bytes };
   }
 
+  /** A HEIC attachment converted to JPEG for inline viewing (cached like the
+   * original bytes); null when the photo can't be decoded. */
+  async function heicAsJpeg(
+    apiDomain: string | null,
+    b: { courseId: number; assignmentId: number; userId: number; attachmentId: number },
+    bytes: Buffer,
+  ): Promise<Buffer | null> {
+    const key = `heic:${cacheKey(apiDomain, b)}:${b.attachmentId}`;
+    const cached = heicJpegCache.get(key);
+    if (cached) return cached;
+    try {
+      const jpeg = await convertHeicToJpeg(bytes);
+      if (jpeg.byteLength <= MAX_CACHE_ENTRY_BYTES) {
+        heicJpegCache.set(key, jpeg, jpeg.byteLength, CACHE_TTL_MS);
+      }
+      return jpeg;
+    } catch {
+      return null;
+    }
+  }
+
   const router = Router();
 
   // -------------------------------------------------------------- submission --
@@ -418,12 +450,23 @@ export function createPreviewRouter(deps: PreviewRoutesDeps): Router {
         throw new RouteError(status, { error, message: statusMessage(outcome.status) });
       }
 
-      const { attachment, bytes } = outcome;
+      const { attachment } = outcome;
+      let { bytes } = outcome;
       // Inline allowlist decided by OUR classification, never Canvas's claim;
       // forced downloads always ride as octet-stream.
-      const contentType = body.download
+      let contentType = body.download
         ? 'application/octet-stream'
         : safeInlineContentType(attachment['content-type'], attachment.filename);
+      // Chrome/Edge can't render HEIC, so the inline view gets a JPEG. A
+      // photo that won't convert streams as-is (octet-stream), and the
+      // viewer's image pane shows its load-failure state.
+      if (!body.download && isHeicAttachment(attachment['content-type'], attachment.filename)) {
+        const jpeg = await heicAsJpeg(apiDomain, body, bytes);
+        if (jpeg) {
+          bytes = jpeg;
+          contentType = 'image/jpeg';
+        }
+      }
       res.status(200);
       res.set({
         'content-type': contentType,
@@ -485,9 +528,14 @@ export function createPreviewRouter(deps: PreviewRoutesDeps): Router {
       const body = parseBody(quizAnswerBody, req);
       const { canvas } = await resolve(req);
 
-      const answers = await canvas.getQuizSubmissionAnswers(body.quizSubmissionId);
-      const entry = answers.find((a) => a.id === body.questionId);
-      const raw = typeof entry?.answer === 'string' ? entry.answer : '';
+      const answers = await canvas.getQuizSubmissionAnswersFromHistory(
+        body.courseId,
+        body.assignmentId,
+        body.userId,
+        body.attempt ? body.attempt : undefined,
+      );
+      const entry = answers.find((a) => a.question_id === body.questionId);
+      const raw = entry?.text ?? '';
       // '' = "fetched, nothing richer than the excerpt" (the C# semantics).
       res.json({ html: sanitizeHtml(raw) });
     });

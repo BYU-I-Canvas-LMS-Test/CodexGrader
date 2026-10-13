@@ -24,7 +24,11 @@
 
 import { Buffer } from 'node:buffer';
 import type { CanvasSubmission, DiscussionEntry } from '@aigrader/canvas';
-import { extractOnlineTextEntry, extractSubmissionText } from '@aigrader/extraction';
+import {
+  convertHeicToJpeg,
+  extractOnlineTextEntry,
+  extractSubmissionText,
+} from '@aigrader/extraction';
 import type {
   AssignmentPrepSettings,
   AssignmentResourceEntry,
@@ -40,7 +44,7 @@ import { pauseSignalOf, type PauseSignal } from '../coordinator/pause.js';
 import { postGradeWarnings, scoreFromTotal } from './post-checks.js';
 import { assembleSubmission, isExcelFilename } from './submission-assembly.js';
 import type { SubmissionFileInput, VisionImagePart } from './submission-assembly.js';
-import { isImageAttachment } from './vision-routing.js';
+import { isHeicAttachment, isImageAttachment } from './vision-routing.js';
 import { compareToKey, summarizeComparison } from './excel-key.js';
 import { DiscussionAggregator } from './discussion-aggregator.js';
 import { enforceAssignmentScale, hasMixedIds, toDraft } from './rubric-draft-mapper.js';
@@ -197,6 +201,7 @@ export class GraderAgent {
       const systemPrompt = composeSystemPrompt({
         vision: content.images.length > 0,
         mixedRubricIds: hasMixedIds(doc.rubricSnapshot),
+        justification: true,
       });
 
       const userMessage = buildUserMessage({
@@ -255,6 +260,8 @@ export class GraderAgent {
       });
       session.updateGrade(canvasUserId, (g) => {
         g.aiDraft = draft;
+        // Instructor-only; replaced with every new draft (absent = none).
+        g.aiJustification = result.output.gradeJustification?.trim() || undefined;
         // A kept faculty edit now predates this draft (re-run) — the reviewer
         // decides whether to keep or discard it.
         if (g.facultyEdited != null) g.staleEdit = true;
@@ -366,6 +373,23 @@ export class GraderAgent {
           throw new Error(`Could not download '${filename}': Canvas provided no download URL.`);
         }
         const bytes = await this.deps.canvas.downloadUrl(att.url); // throws → row ERROR
+
+        // iPhone photos: the vision model can't read HEIC, so it rides as a
+        // JPEG (the filename stays the student's). A photo that won't decode
+        // is a deterministic failure — noted like any unreadable file.
+        if (isHeicAttachment(mediaType, filename)) {
+          try {
+            const jpeg = await convertHeicToJpeg(bytes);
+            files.push({ filename, mediaType: 'image/jpeg', imageBytes: jpeg });
+          } catch (err) {
+            files.push({
+              filename,
+              mediaType,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          continue;
+        }
 
         if (isImageAttachment(mediaType, filename)) {
           files.push({ filename, mediaType, imageBytes: bytes });

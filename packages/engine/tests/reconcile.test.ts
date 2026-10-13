@@ -236,7 +236,7 @@ describe('quiz reconcile', () => {
   it('requeues in-flight questions and re-posts APPROVED groups (idempotent PUT)', async () => {
     const canvas = new FakeCanvas();
     canvas.students = [student(1), student(2)];
-    canvas.quizAnswers.set(100, [{ id: 7, answer: '<p>redone answer</p>' }]);
+    canvas.quizAnswers.set('1:1', [{ question_id: 7, points: null, text: '<p>redone answer</p>' }]);
 
     const checkpoint = makeRunDoc({
       canvasQuizId: 42,

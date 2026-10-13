@@ -46,12 +46,20 @@ describe('buildGradeSubmissionResponseSchema', () => {
     const schema = buildGradeSubmissionResponseSchema(criteria);
 
     expect(schema.type).toBe('object');
+    // gradeJustification (instructor-only) is last, after the student-facing keys.
     expect(Object.keys(schema.properties!)).toEqual([
       'TotalPoints',
       'assignmentFeedback',
       'Rubrics',
+      'gradeJustification',
     ]);
-    expect(schema.required).toEqual(['TotalPoints', 'assignmentFeedback', 'Rubrics']);
+    expect(schema.required).toEqual([
+      'TotalPoints',
+      'assignmentFeedback',
+      'Rubrics',
+      'gradeJustification',
+    ]);
+    expect(schema.properties!.gradeJustification!.type).toBe('string');
     expect(schema.properties!.TotalPoints!.type).toBe('string');
     expect(schema.properties!.assignmentFeedback!.type).toBe('string');
     expect(schema.properties!.Rubrics!.type).toBe('array');
@@ -75,8 +83,8 @@ describe('buildQuizQuestionResponseSchema', () => {
   it('declares the byte-exact quiz keys', () => {
     const schema = buildQuizQuestionResponseSchema();
     expect(schema.type).toBe('object');
-    expect(Object.keys(schema.properties!)).toEqual(['score', 'comment']);
-    expect(schema.required).toEqual(['score', 'comment']);
+    expect(Object.keys(schema.properties!)).toEqual(['score', 'comment', 'gradeJustification']);
+    expect(schema.required).toEqual(['score', 'comment', 'gradeJustification']);
     expect(schema.properties!.score!.type).toBe('number');
     expect(schema.properties!.comment!.type).toBe('string');
   });
@@ -145,6 +153,14 @@ describe('GraderOutputSchema (validation gate)', () => {
     expect(parsed.ratingID).toBe('4');
   });
 
+  it('carries the instructor-only justification, and never requires it', () => {
+    const withNote = GraderOutputSchema.parse({ ...valid, gradeJustification: 'Thesis met.' });
+    expect(withNote.gradeJustification).toBe('Thesis met.');
+    // Missing or empty: still a valid draft (the note never costs a grade).
+    expect(GraderOutputSchema.safeParse(valid).success).toBe(true);
+    expect(GraderOutputSchema.safeParse({ ...valid, gradeJustification: '' }).success).toBe(true);
+  });
+
   it('rejects wrong key casing (totalPoints is not TotalPoints)', () => {
     const wrongKeys = {
       totalPoints: '18/20',
@@ -181,6 +197,16 @@ describe('QuizQuestionGraderOutputSchema (validation gate)', () => {
   it('accepts a valid quiz grade', () => {
     const parsed = QuizQuestionGraderOutputSchema.parse({ score: 4.5, comment: 'Good detail.' });
     expect(parsed.score).toBe(4.5);
+  });
+
+  it('carries an optional instructor-only justification', () => {
+    const parsed = QuizQuestionGraderOutputSchema.parse({
+      score: 2,
+      comment: 'Partly right.',
+      gradeJustification: 'Names the cause but not the effect.',
+    });
+    expect(parsed.gradeJustification).toBe('Names the cause but not the effect.');
+    expect(QuizQuestionGraderOutputSchema.safeParse({ score: 2, comment: 'x' }).success).toBe(true);
   });
 
   it('rejects negative scores, empty comments, and wrong keys', () => {

@@ -6,6 +6,8 @@
 // HTTP, same pattern as course-routes.test.ts. Heavy conversion logic is
 // pinned in @aigrader/extraction's own suites; here we pin the WIRE contract.
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import express from 'express';
 import type { CanvasAttachment, CanvasSubmission } from '@aigrader/canvas';
@@ -69,9 +71,10 @@ function submission(partial: Partial<CanvasSubmission> = {}): CanvasSubmission {
 function makeApp(overrides: {
   submission?: CanvasSubmission | null;
   files?: Record<string, Uint8Array>;
-  quizAnswers?: Array<{ id: number; answer: unknown }>;
+  quizAnswers?: Array<{ question_id: number; points: number | null; text?: string | null }>;
 }) {
   const downloads: string[] = [];
+  const quizReads: unknown[][] = [];
   const clients: PreviewRouteClients = {
     canvas: {
       getSubmission: async () => overrides.submission ?? null,
@@ -81,13 +84,16 @@ function makeApp(overrides: {
         if (!bytes) throw new Error(`no fake bytes for ${url}`);
         return Buffer.from(bytes);
       },
-      getQuizSubmissionAnswers: async () => (overrides.quizAnswers ?? []) as never,
+      getQuizSubmissionAnswersFromHistory: async (...args) => {
+        quizReads.push(args);
+        return overrides.quizAnswers ?? [];
+      },
     },
   };
   const app = express();
   app.use(express.json({ limit: '1mb' }));
   app.use('/preview', createPreviewRouter({ clients: async () => clients }));
-  return { app, downloads };
+  return { app, downloads, quizReads };
 }
 
 async function postRaw(baseUrl: string, path: string, body: unknown): Promise<Response> {
@@ -143,6 +149,39 @@ describe('POST /preview/file', () => {
     await withServer(app, async (baseUrl) => {
       const res = await postRaw(baseUrl, '/preview/file', baseBody({ attachmentId: 13 }));
       expect(res.headers.get('content-type')).toBe('image/jpeg');
+    });
+  });
+
+  it('streams a HEIC photo inline as a converted JPEG; download keeps the original', async () => {
+    const heic = readFileSync(
+      fileURLToPath(new URL('../../extraction/tests/fixtures/quadrants.heic', import.meta.url)),
+    );
+    const att = attachment({ id: 15, filename: 'IMG_7.HEIC', 'content-type': 'image/heic' });
+    const broken = attachment({ id: 16, filename: 'IMG_8.heic', 'content-type': 'image/heic' });
+    const { app } = makeApp({
+      submission: submission({ attachments: [att, broken] }),
+      files: { [att.url!]: heic, [broken.url!]: new TextEncoder().encode('not a photo') },
+    });
+
+    await withServer(app, async (baseUrl) => {
+      const inline = await postRaw(baseUrl, '/preview/file', baseBody({ attachmentId: 15 }));
+      expect(inline.headers.get('content-type')).toBe('image/jpeg');
+      const jpeg = Buffer.from(await inline.arrayBuffer());
+      expect([...jpeg.subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff]);
+      expect(inline.headers.get('content-length')).toBe(String(jpeg.byteLength));
+
+      const download = await postRaw(
+        baseUrl,
+        '/preview/file',
+        baseBody({ attachmentId: 15, download: true }),
+      );
+      expect(download.headers.get('content-type')).toBe('application/octet-stream');
+      expect(Buffer.from(await download.arrayBuffer()).equals(heic)).toBe(true);
+
+      // A photo that won't convert never rides as an inline image type.
+      const bad = await postRaw(baseUrl, '/preview/file', baseBody({ attachmentId: 16 }));
+      expect(bad.status).toBe(200);
+      expect(bad.headers.get('content-type')).toBe('application/octet-stream');
     });
   });
 
@@ -345,27 +384,35 @@ describe('POST /preview/convert', () => {
 
 describe('POST /preview/quiz-answer', () => {
   it('returns the sanitized full answer, and "" when nothing richer exists', async () => {
-    const { app } = makeApp({
+    const { app, quizReads } = makeApp({
       submission: null,
-      quizAnswers: [{ id: 5, answer: '<p style="x">full <script>a()</script>answer</p>' }],
+      quizAnswers: [
+        { question_id: 5, points: 0, text: '<p style="x">full <script>a()</script>answer</p>' },
+      ],
     });
 
     await withServer(app, async (baseUrl) => {
       const hit = await postJson(baseUrl, '/preview/quiz-answer', {
         apiDomain: 'school.instructure.com',
         courseId: 42,
-        quizSubmissionId: 77,
+        assignmentId: 900,
+        userId: 7,
+        attempt: 2,
         questionId: 5,
       });
       expect((hit.body as { html: string }).html).toBe('<p>full answer</p>');
+      // Read off the backing assignment submission for that student/attempt.
+      expect(quizReads[0]).toEqual([42, 900, 7, 2]);
 
       const miss = await postJson(baseUrl, '/preview/quiz-answer', {
         apiDomain: 'school.instructure.com',
         courseId: 42,
-        quizSubmissionId: 77,
+        assignmentId: 900,
+        userId: 7,
         questionId: 6,
       });
       expect((miss.body as { html: string }).html).toBe('');
+      expect(quizReads[1]).toEqual([42, 900, 7, undefined]);
     });
   });
 });
