@@ -12,5 +12,9 @@ export default defineConfig({
   ssr: { resolve: { conditions } },
   test: {
     environment: 'node',
+    // The first test in each file to touch a PDF pays pdf.js's cold import
+    // (the HEIC tests likewise load libheif): well under a second locally,
+    // but 9–12s on a busy Windows CI runner — past the 5s default.
+    testTimeout: 30_000,
   },
 });
