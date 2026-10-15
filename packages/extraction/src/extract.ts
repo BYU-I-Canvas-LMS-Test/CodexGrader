@@ -1,5 +1,5 @@
 // Submission text extraction: turns whatever a student handed in (DOCX, PDF,
-// XLSX, CSV, code, plain text) into plain text for the grading prompt.
+// XLSX, CSV, Pages, code, plain text) into plain text for the grading prompt.
 //
 // Ported from: C:\Devs\AIgrader\lib\extract\index.ts (extract dispatcher) and
 // C:\Devs\AIGrader-C#\src\AiGrader\Services\Extraction\SubmissionTextExtractor.cs
@@ -13,9 +13,10 @@
 // extractOnlineTextEntry from text.ts.
 
 import { Buffer } from 'node:buffer';
+import { isPagesAttachment } from '@aigrader/shared/preview';
 import { TEXT_AND_CODE_EXTENSIONS, fileExtension } from './extensions.js';
 
-export type ExtractKind = 'docx' | 'xlsx' | 'csv' | 'pdf' | 'text';
+export type ExtractKind = 'docx' | 'pages' | 'xlsx' | 'csv' | 'pdf' | 'text';
 
 export type ExtractResult = {
   text: string;
@@ -47,6 +48,12 @@ export async function extractSubmissionText(
     const { extractDocx } = await import('./docx.js');
     const r = await extractDocx(bytes);
     return { text: r.text, warnings: r.warnings, kind: 'docx' };
+  }
+
+  if (isPagesAttachment(mime, name)) {
+    const { extractPages } = await import('./pages.js');
+    const r = await extractPages(bytes);
+    return { text: r.text, warnings: r.warnings, kind: 'pages' };
   }
 
   if (

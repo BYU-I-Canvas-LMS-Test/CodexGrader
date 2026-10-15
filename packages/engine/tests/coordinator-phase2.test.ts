@@ -329,7 +329,75 @@ describe('startRun', () => {
       }),
     );
     await expect(harness.engine.startRun(START)).rejects.toBeInstanceOf(EngineError);
-    await expect(harness.engine.startRun(START)).rejects.toMatchObject({ code: 'run_already_active' });
+    await expect(harness.engine.startRun(START)).rejects.toMatchObject({
+      code: 'run_already_active',
+      details: { runId: 'elsewhere', runStatus: 'RUNNING', elsewhere: true },
+    });
+  });
+
+  it('an interrupted run on this computer blocks with its id and status (so the page can offer Open / Cancel)', async () => {
+    harness = buildEngine({ canvas: twoStudentCanvas() });
+    harness.runStore.docs.set('run1', makeRunDoc({ runId: 'run1', status: 'RUNNING' }));
+    harness.progressStore.docs.set('run1', makeProgressDoc({ runId: 'run1' }));
+    await expect(harness.engine.startRun(START)).rejects.toMatchObject({
+      code: 'run_already_active',
+      details: { runId: 'run1', runStatus: 'RUNNING', elsewhere: false },
+    });
+  });
+
+  it('forgets a leftover local record whose Canvas checkpoint is gone or finished, and starts', async () => {
+    harness = buildEngine({ canvas: twoStudentCanvas() });
+    harness.progressStore.docs.set('ghost', makeProgressDoc({ runId: 'ghost' }));
+    harness.runStore.docs.set('done', makeRunDoc({ runId: 'done', status: 'COMPLETED', createdAt: '2026-06-01T00:00:00.000Z' }));
+    harness.progressStore.docs.set('done', makeProgressDoc({ runId: 'done', status: 'POSTING' }));
+
+    await expect(harness.engine.startRun(START)).resolves.toMatchObject({ runId: expect.any(String) });
+    expect(harness.progressStore.docs.has('ghost')).toBe(false);
+    expect(harness.progressStore.docs.has('done')).toBe(false);
+  });
+});
+
+// ------------------------------------------------------------------ cancel --
+
+describe('cancel (run not live here)', () => {
+  it('finishes the cancel right away instead of waiting for a sweep', async () => {
+    harness = buildEngine({ canvas: twoStudentCanvas() });
+    harness.runStore.docs.set(
+      'run1',
+      makeRunDoc({ runId: 'run1', status: 'RUNNING', grades: [makeGrade({ canvasUserId: 1, status: 'SCORING' })] }),
+    );
+    harness.progressStore.docs.set('run1', makeProgressDoc({ runId: 'run1' }));
+
+    await expect(harness.engine.cancel('run1')).resolves.toEqual({ status: 'cancelled' });
+    expect(harness.runStore.docs.get('run1')!.status).toBe('CANCELLED');
+    expect(harness.progressStore.docs.get('run1')!.status).toBe('CANCELLED');
+    expect(harness.modelCalls).toHaveLength(0); // nothing re-queued
+    await expect(harness.engine.startRun(START)).resolves.toMatchObject({ runId: expect.any(String) });
+  });
+
+  it('forgets a run whose Canvas checkpoint no longer exists', async () => {
+    harness = buildEngine({ canvas: twoStudentCanvas() });
+    harness.progressStore.docs.set('ghost', makeProgressDoc({ runId: 'ghost' }));
+
+    await expect(harness.engine.cancel('ghost')).resolves.toEqual({ status: 'cancelled' });
+    expect(harness.progressStore.docs.has('ghost')).toBe(false);
+  });
+
+  it('only flags a run another computer still holds', async () => {
+    harness = buildEngine({ canvas: twoStudentCanvas() });
+    harness.runStore.docs.set(
+      'run1',
+      makeRunDoc({
+        runId: 'run1',
+        status: 'RUNNING',
+        lock: { owner: 'other-laptop:abc', ownerName: 'TA', heartbeatUtc: harness.clock.now().toISOString() },
+      }),
+    );
+    harness.progressStore.docs.set('run1', makeProgressDoc({ runId: 'run1' }));
+
+    await expect(harness.engine.cancel('run1')).resolves.toEqual({ status: 'flagged' });
+    expect(harness.progressStore.docs.get('run1')!.cancelRequested).toBe(true);
+    expect(harness.runStore.docs.get('run1')!.status).toBe('RUNNING');
   });
 });
 
@@ -434,7 +502,7 @@ describe('run-level pause', () => {
     const saved = runStore.docs.get(runId)!;
     expect(saved.pausedReason).toBe('usage_limit');
     expect(saved.pausedUntil).toBe('2026-06-10T21:00:00.000Z');
-    expect(saved.pausedMessage).toContain('2026-06-10T21:00:00.000Z');
+    expect(saved.pausedMessage).toContain('continues automatically');
 
     limited = false;
     await expect(engine.resume(runId)).resolves.toMatchObject({ outcome: 'resumed', requeued: 2 });
@@ -442,6 +510,25 @@ describe('run-level pause', () => {
     expect(doc.grades.every((g) => g.status === 'DRAFT')).toBe(true);
     expect(doc.pausedReason).toBeUndefined();
     expect(doc.status).toBe('REVIEWING');
+  });
+
+  it('Codex rate limits (HTTP 429) that outlast the cool-downs pause the run instead of erroring rows', async () => {
+    harness = buildEngine({
+      canvas: twoStudentCanvas(),
+      modelCall: async () => {
+        throw Object.assign(new Error('exceeded retry limit, last status: 429 Too Many Requests'), {
+          status: 429,
+        });
+      },
+    });
+    const { runId } = await harness.engine.startRun(START);
+    await harness.engine.onIdle();
+    const live = harness.registry.get(runId)!;
+    const doc = live.session.document;
+    expect(doc.grades.every((g) => g.status === 'PENDING')).toBe(true);
+    expect(live.paused?.reason).toBe('usage_limit'); // the stored enum: lifts by itself
+    expect(doc.pausedMessage).toContain('HTTP 429');
+    expect(doc.pausedUntil).toBeDefined();
   });
 
   it('an expired Codex sign-in pauses with codex_auth and no automatic resume time', async () => {

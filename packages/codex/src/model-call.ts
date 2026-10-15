@@ -111,7 +111,23 @@ export function createCodexModelCall(opts: CodexModelCallOptions): ModelCallFn {
         if (info.kind === 'usage_limit' && !info.resetsAt && quota) {
           info.resetsAt = await quota.resetTimeNow();
         }
-        opts.onCall?.({ durationMs: run.durationMs, ok: false, failure: info.kind ?? (info.retryable ? 'transient' : 'error') });
+        if (info.status === 429 && !info.kind && quota) {
+          // A bare 429 is usually a short burst limit, but it can also be a
+          // usage window running out: re-read the windows, so a real limit
+          // pauses until its reset instead of being retried.
+          await quota.snapshot(true);
+          try {
+            await quota.check();
+          } catch (err) {
+            opts.onCall?.({ durationMs: run.durationMs, ok: false, failure: 'usage_limit' });
+            throw err;
+          }
+        }
+        opts.onCall?.({
+          durationMs: run.durationMs,
+          ok: false,
+          failure: info.kind ?? (info.status === 429 ? 'rate_limited' : info.retryable ? 'transient' : 'error'),
+        });
         throw toThrowable(info);
       }
 

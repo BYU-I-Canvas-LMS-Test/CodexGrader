@@ -57,6 +57,9 @@ function stripHtml(html: string): string {
     .trim();
 }
 
+/** A run that is still active on this assignment (from run_already_active). */
+type ActiveRun = { runId: string; runStatus: string; elsewhere: boolean };
+
 export function PrepareView({
   courseKey,
   assignmentId,
@@ -89,6 +92,9 @@ export function PrepareView({
   const [notes, setNotes] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  /** The earlier run that blocked a launch (run_already_active), so the
+   * banner can offer to open or cancel it. */
+  const [activeRun, setActiveRun] = React.useState<ActiveRun | null>(null);
   const [savingPrep, setSavingPrep] = React.useState(false);
 
   const loadResources = React.useCallback(async () => {
@@ -146,6 +152,7 @@ export function PrepareView({
     if (!detail) return;
     setSubmitting(true);
     setError(null);
+    setActiveRun(null);
     try {
       const target =
         detail.itemType === 'quiz'
@@ -163,6 +170,13 @@ export function PrepareView({
         body: JSON.stringify({ target, instructions: notes.trim() || null }),
       });
       const body = await res.json().catch(() => null);
+      if (body?.error === 'run_already_active' && typeof body.runId === 'string') {
+        setActiveRun({
+          runId: body.runId,
+          runStatus: typeof body.runStatus === 'string' ? body.runStatus : '',
+          elsewhere: body.elsewhere === true,
+        });
+      }
       if (res.status !== 202 || !body?.runId) {
         throw new Error(body?.message ?? `Run did not start (HTTP ${res.status}).`);
       }
@@ -171,6 +185,39 @@ export function PrepareView({
       setError(err instanceof Error ? err.message : 'unknown error');
       setSubmitting(false);
     }
+  }
+
+  /** Cancels the earlier run that blocked the launch, then launches. */
+  async function cancelActiveAndLaunch() {
+    if (!activeRun) return;
+    const ok = window.confirm(
+      'Cancel the earlier grading run? It stops grading and nothing more posts from it. ' +
+        'Grades it already posted stay in Canvas, and the run stays in Grading Runs. ' +
+        'Then this new run starts.',
+    );
+    if (!ok) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/runs/${encodeURIComponent(activeRun.runId)}/cancel?courseKey=${ck}`,
+        { method: 'POST' },
+      );
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(body?.message ?? `The earlier run could not be cancelled (HTTP ${res.status}).`);
+      }
+      if (body?.status !== 'cancelled') {
+        throw new Error(
+          'The earlier run is still open on another computer. Cancel it there (or open it here and take it over), then launch again.',
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'unknown error');
+      setSubmitting(false);
+      return;
+    }
+    await launch();
   }
 
   if (loadError) {
@@ -477,7 +524,31 @@ export function PrepareView({
 
         {error ? (
           <div style={{ marginTop: 14 }}>
-            <ErrorBanner>{error}</ErrorBanner>
+            <ErrorBanner
+              action={
+                activeRun ? (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <Link
+                      className="btn btn-secondary"
+                      href={`${base}/runs/${encodeURIComponent(activeRun.runId)}`}
+                    >
+                      Open that run
+                    </Link>
+                    {isStaff && !activeRun.elsewhere && activeRun.runStatus !== 'POSTING' ? (
+                      <button
+                        className="btn btn-primary"
+                        onClick={() => void cancelActiveAndLaunch()}
+                        disabled={submitting}
+                      >
+                        Cancel it and launch
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null
+              }
+            >
+              {error}
+            </ErrorBanner>
           </div>
         ) : null}
 

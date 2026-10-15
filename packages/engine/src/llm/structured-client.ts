@@ -36,10 +36,26 @@ import {
 
 /** Per-attempt hard timeout (composed with any caller signal). */
 export const LLM_CALL_TIMEOUT_MS = 300_000;
-/** Transient-failure attempts (429/5xx/network/timeout/empty responses). */
+/** Transient-failure attempts (5xx/network/timeout/empty responses). */
 export const LLM_MAX_ATTEMPTS = 3;
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_JITTER_MS = 500;
+
+// Rate limits (HTTP 429). By the time Codex reports a 429 it has already
+// retried for a few seconds itself, so the limit is a per-minute one: wait
+// in tens of seconds, not one or two. The cool-down is SHARED by every call
+// this client makes, so concurrent graders back off together instead of
+// each one hammering a limit that has already tripped.
+/** Attempts while Codex keeps answering 429, before the run pauses. */
+export const RATE_LIMIT_MAX_ATTEMPTS = 4;
+/** First cool-down; doubles per consecutive 429 (15s, 30s, 60s, …). */
+export const RATE_LIMIT_BACKOFF_BASE_MS = 15_000;
+const RATE_LIMIT_BACKOFF_MAX_MS = 120_000;
+const RATE_LIMIT_JITTER_MS = 1_000;
+/** After a cool-down, the calls that were held restart this far apart. */
+export const RATE_LIMIT_STAGGER_MS = 2_000;
+/** How long a run pauses (then resumes itself) when 429s persist. */
+export const RATE_LIMIT_PAUSE_MS = 5 * 60_000;
 
 /** Token usage and latency for one grading call (recorded on the run doc). */
 export type LlmStats = {
@@ -58,9 +74,15 @@ export type LlmResult<T> = { output: T; stats: LlmStats };
 
 /**
  * Why a call failed in a way the RUN (not just the row) must react to. The
- * engine pauses a run on `usage_limit` / `auth` instead of erroring every row.
+ * engine pauses a run on `usage_limit` / `rate_limited` / `auth` instead of
+ * erroring every row.
  */
-export type GradingFailureKind = 'usage_limit' | 'auth' | 'model_unavailable' | 'refusal';
+export type GradingFailureKind =
+  | 'usage_limit'
+  | 'rate_limited'
+  | 'auth'
+  | 'model_unavailable'
+  | 'refusal';
 
 /**
  * Every failure of a grading call surfaces as this typed error — the engine
@@ -70,7 +92,7 @@ export type GradingFailureKind = 'usage_limit' | 'auth' | 'model_unavailable' | 
 export class GradingCallError extends Error {
   readonly retryable: boolean;
   readonly kind?: GradingFailureKind;
-  /** When a usage limit resets (ISO), if the backend said. */
+  /** When a usage limit resets / a rate-limit pause lifts (ISO), if known. */
   readonly resetsAt?: string;
   override readonly cause?: unknown;
 
@@ -129,10 +151,14 @@ export type StructuredGradingClientOptions = {
   timeoutMs?: number;
   /** Transient-attempt override (tests). */
   maxAttempts?: number;
+  /** Rate-limit attempt override (tests). */
+  rateLimitAttempts?: number;
   /** Injectable backoff sleep (tests). */
   sleep?: (ms: number) => Promise<void>;
   /** Injectable jitter source in [0, 1) (tests). */
   random?: () => number;
+  /** Injectable clock, epoch ms (tests). */
+  now?: () => number;
 };
 
 export type GradeSubmissionCall = {
@@ -192,15 +218,28 @@ export class StructuredGradingClient implements GradingLlm {
   private readonly modelCall: ModelCallFn;
   private readonly timeoutMs: number;
   private readonly maxAttempts: number;
+  private readonly rateLimitAttempts: number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly random: () => number;
+  private readonly now: () => number;
+  /** No call starts before this (epoch ms) — the shared 429 cool-down. */
+  private coolDownUntil = 0;
+  /** The next staggered start slot for calls held by a cool-down. */
+  private nextStart = 0;
 
   constructor(opts: StructuredGradingClientOptions) {
     this.modelCall = opts.modelCall;
     this.timeoutMs = opts.timeoutMs ?? LLM_CALL_TIMEOUT_MS;
     this.maxAttempts = opts.maxAttempts ?? LLM_MAX_ATTEMPTS;
-    this.sleep = opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.rateLimitAttempts = opts.rateLimitAttempts ?? RATE_LIMIT_MAX_ATTEMPTS;
+    this.sleep =
+      opts.sleep ??
+      ((ms) =>
+        new Promise((resolve) => {
+          setTimeout(resolve, ms).unref?.();
+        }));
     this.random = opts.random ?? Math.random;
+    this.now = opts.now ?? Date.now;
   }
 
   /** Grades one assignment submission; returns the rubric-shaped output. */
@@ -306,17 +345,25 @@ export class StructuredGradingClient implements GradingLlm {
   }
 
   /**
-   * The transient-retry loop: up to maxAttempts, with 1s*2^(n-1) backoff +
-   * 0–500ms jitter. Retryable: 429, 5xx, network errors (no status), timeout
-   * aborts, and empty responses (re-rolled). Non-retryable: other 4xx,
-   * caller cancellation, and any GradingCallError the backend throws itself
-   * (usage limits, auth, refusals — the backend already classified them).
+   * The retry loop. Transient failures — 5xx, network errors (no status),
+   * timeout aborts, and empty responses (re-rolled) — get up to maxAttempts
+   * with 1s*2^(n-1) backoff + 0–500ms jitter. A 429 instead opens the shared
+   * cool-down (15s, 30s, 60s, …) and, after rateLimitAttempts, fails as
+   * `rate_limited` so the engine pauses the run rather than erroring rows.
+   * Non-retryable: other 4xx, caller cancellation, and any GradingCallError
+   * the backend throws itself (usage limits, auth, refusals — the backend
+   * already classified them).
    */
   private async callModelWithRetry(call: StructuredCall): Promise<ModelResponse> {
-    for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+    let attempt = 0;
+    let transientFailures = 0;
+    let rateLimits = 0;
+    for (;;) {
+      await this.waitForCoolDown(call.signal);
       if (call.signal?.aborted) {
         throw new GradingCallError('The grading call was cancelled.', { retryable: false });
       }
+      attempt++;
 
       // Per-attempt timeout, composed with the caller's signal.
       const controller = new AbortController();
@@ -338,7 +385,8 @@ export class StructuredGradingClient implements GradingLlm {
         const text = response.text;
         if (text != null && text.trim().length > 0) return response;
         // Empty response: re-roll a fresh attempt.
-        if (attempt === this.maxAttempts) {
+        transientFailures++;
+        if (transientFailures >= this.maxAttempts) {
           throw new GradingCallError(
             `The model returned an empty response after ${attempt} attempt(s).`,
             { retryable: true },
@@ -353,14 +401,31 @@ export class StructuredGradingClient implements GradingLlm {
           });
         }
         const status = errorStatus(err);
-        const retryable = status === undefined || status === 429 || status >= 500;
+        if (status === 429) {
+          rateLimits++;
+          if (rateLimits >= this.rateLimitAttempts) {
+            throw new GradingCallError(
+              `Codex is getting too many requests right now (HTTP 429), still after ${attempt} attempt(s): ${errorMessage(err)}`,
+              {
+                retryable: true,
+                kind: 'rate_limited',
+                resetsAt: new Date(this.now() + RATE_LIMIT_PAUSE_MS).toISOString(),
+                cause: err,
+              },
+            );
+          }
+          this.openCoolDown(rateLimits);
+          continue; // the next pass waits the cool-down out
+        }
+        const retryable = status === undefined || status >= 500;
         if (!retryable) {
           throw new GradingCallError(
             `The model rejected the grading request (HTTP ${status}): ${errorMessage(err)}`,
             { retryable: false, cause: err },
           );
         }
-        if (attempt === this.maxAttempts) {
+        transientFailures++;
+        if (transientFailures >= this.maxAttempts) {
           throw new GradingCallError(
             `The grading call failed after ${attempt} attempt(s): ${errorMessage(err)}`,
             { retryable: true, cause: err },
@@ -372,10 +437,45 @@ export class StructuredGradingClient implements GradingLlm {
       }
 
       // Both the empty-response and transient-error paths back off here.
-      await this.sleep(BACKOFF_BASE_MS * 2 ** (attempt - 1) + this.random() * BACKOFF_JITTER_MS);
+      await this.sleep(
+        BACKOFF_BASE_MS * 2 ** (transientFailures - 1) + this.random() * BACKOFF_JITTER_MS,
+      );
     }
-    // Unreachable: the final attempt always returns or throws.
-    throw new GradingCallError('The grading call failed.', { retryable: true });
+  }
+
+  /** Opens (or extends) the shared cool-down after the n-th 429 in a row. */
+  private openCoolDown(streak: number): void {
+    const delay =
+      Math.min(RATE_LIMIT_BACKOFF_BASE_MS * 2 ** (streak - 1), RATE_LIMIT_BACKOFF_MAX_MS) +
+      this.random() * RATE_LIMIT_JITTER_MS;
+    this.coolDownUntil = Math.max(this.coolDownUntil, this.now() + delay);
+  }
+
+  /** Waits out an active cool-down. Calls it held restart a couple of
+   * seconds apart, not all at once (that would just trip the limit again). */
+  private async waitForCoolDown(signal?: AbortSignal): Promise<void> {
+    const now = this.now();
+    if (now >= this.coolDownUntil && now >= this.nextStart) return;
+    const start = Math.max(now, this.coolDownUntil, this.nextStart);
+    this.nextStart = start + RATE_LIMIT_STAGGER_MS;
+    await this.sleepUnlessAborted(start - now, signal);
+  }
+
+  /** `sleep`, cut short when the caller cancels (cancel never waits out a
+   * cool-down). */
+  private async sleepUnlessAborted(ms: number, signal?: AbortSignal): Promise<void> {
+    if (!signal) return this.sleep(ms);
+    if (signal.aborted) return;
+    let onAbort = () => {};
+    const aborted = new Promise<void>((resolve) => {
+      onAbort = resolve;
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+    try {
+      await Promise.race([this.sleep(ms), aborted]);
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+    }
   }
 }
 

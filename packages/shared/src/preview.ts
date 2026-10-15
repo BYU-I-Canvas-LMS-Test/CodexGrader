@@ -113,6 +113,21 @@ export function isHeicAttachment(
   return HEIC_EXTENSIONS.has(previewFileExtension(filename));
 }
 
+const PAGES_MEDIA_TYPES: ReadonlySet<string> = new Set([
+  'application/vnd.apple.pages',
+  'application/x-iwork-pages-sffpages',
+]);
+
+/** True for an Apple Pages document (extension, or the MIME types Macs
+ * report; Canvas often says octet-stream or zip). */
+export function isPagesAttachment(
+  mime: string | null | undefined,
+  filename: string | null | undefined,
+): boolean {
+  if (mime != null && PAGES_MEDIA_TYPES.has(mime.toLowerCase())) return true;
+  return previewFileExtension(filename) === '.pages';
+}
+
 // ------------------------------------------------------------ classification --
 
 /** How the viewer should render one attachment (C# PreviewKind). */

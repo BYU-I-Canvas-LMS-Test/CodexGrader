@@ -151,6 +151,8 @@ export class EngineError extends Error {
       | 'run_already_active'
       | 'run_locked_elsewhere',
     message: string,
+    /** Machine-readable extras for the response body (ids/status only). */
+    readonly details?: Record<string, string | number | boolean | null>,
   ) {
     super(message);
     this.name = 'EngineError';
@@ -875,7 +877,8 @@ export class GradingEngine {
    * Cancels a run: flags the progress record + in-memory state, aborts
    * in-flight LLM calls, and transitions CANCELLED with an immediate flush.
    * NEVER touches POSTED rows. When the run isn't live in this process, the
-   * flag alone is set and the resume sweep finalizes it.
+   * flag is set and the cancel finishes right away through resume (see
+   * finishCancel); only a run open on another computer stays flagged.
    */
   async cancel(runId: string): Promise<{ status: 'cancelled' | 'flagged' }> {
     const live = this.deps.registry.get(runId);
@@ -883,7 +886,7 @@ export class GradingEngine {
       const progress = await this.deps.progressStore.get(runId);
       if (!progress) throw new EngineError('unknown_run', `No progress record for run ${runId}.`);
       await this.deps.progressStore.requestCancel(runId);
-      return { status: 'flagged' };
+      return this.finishCancel(runId);
     }
 
     live.cancelRequested = true;
@@ -893,6 +896,52 @@ export class GradingEngine {
     await live.session.transition('CANCELLED'); // immediate flush
     await this.finalizeTerminal(runId);
     return { status: 'cancelled' };
+  }
+
+  /**
+   * Finishes a cancel for a run that isn't live here instead of leaving the
+   * flag for a later sweep: resume sees the flag and records CANCELLED
+   * without re-queuing anything. A run open on another computer stays
+   * flagged; one whose Canvas checkpoint is gone is forgotten.
+   */
+  private async finishCancel(runId: string): Promise<{ status: 'cancelled' | 'flagged' }> {
+    try {
+      const result = await this.resume(runId, { respectLock: true });
+      switch (result.outcome) {
+        case 'finalized_cancelled':
+        case 'terminal':
+          return { status: 'cancelled' };
+        case 'skipped_lock':
+          return { status: 'flagged' };
+        default:
+          // A resume already in flight made it live first — cancel that.
+          return this.deps.registry.get(runId) ? this.cancel(runId) : { status: 'flagged' };
+      }
+    } catch (err) {
+      if (err instanceof EngineError && err.code === 'run_document_missing') {
+        await this.forgetRun(runId, 'cancelled, and its Canvas checkpoint no longer exists');
+        return { status: 'cancelled' };
+      }
+      this.warn(
+        `[engine] Cancel of run ${runId} stays pending: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return { status: 'flagged' };
+    }
+  }
+
+  /**
+   * Drops this machine's record of a run whose Canvas checkpoint is gone
+   * (deleted, or removed with a course reset) or already finished. There is
+   * nothing left to resume, and a leftover record would otherwise block new
+   * runs on the assignment and fail every sweep. Never touches Canvas; a run
+   * live in this process is never forgotten.
+   */
+  async forgetRun(runId: string, reason: string): Promise<void> {
+    if (this.contexts.has(runId)) return;
+    await this.deps.progressStore.remove(runId);
+    this.warn(`[engine] Forgot run ${runId} (${reason}).`);
   }
 
   // --------------------------------------------------------- edit / approve --
@@ -1550,10 +1599,18 @@ export class GradingEngine {
     assignmentId: number,
   ): Promise<void> {
     const active: readonly RunStatus[] = ['PENDING', 'RUNNING', 'POSTING'];
-    const refuse = (runId: string) => {
+    // The run id + status ride along so the page can offer Open / Cancel.
+    // (Annotated so control flow knows a call never returns.)
+    type Refuse = (runId: string, status: RunStatus, elsewhere?: { ownerName?: string | null }) => never;
+    const refuse: Refuse = (runId, status, elsewhere) => {
       throw new EngineError(
         'run_already_active',
-        `A grading run for this assignment is still in progress (run ${runId}). Let it finish, or cancel it, before starting another.`,
+        elsewhere
+          ? `A grading run for this assignment is open on another computer${
+              elsewhere.ownerName ? ` (${elsewhere.ownerName})` : ''
+            } (run ${runId}). Let it finish there, or cancel it, before starting another.`
+          : `A grading run for this assignment is still in progress (run ${runId}). Let it finish, or cancel it, before starting another.`,
+        { runId, runStatus: status, elsewhere: elsewhere !== undefined },
       );
     };
     for (const ctx of this.contexts.values()) {
@@ -1563,13 +1620,30 @@ export class GradingEngine {
         doc.canvasAssignmentId === assignmentId &&
         active.includes(doc.status)
       ) {
-        refuse(doc.runId);
+        refuse(doc.runId, doc.status);
       }
     }
     for (const rec of await this.deps.progressStore.listLive()) {
-      if (rec.courseKey === courseKey && rec.canvasAssignmentId === assignmentId && active.includes(rec.status)) {
-        refuse(rec.runId);
+      if (rec.courseKey !== courseKey || rec.canvasAssignmentId !== assignmentId) continue;
+      if (!active.includes(rec.status) || this.contexts.has(rec.runId)) continue;
+      // Not live here: an interrupted run the sweep will resume — unless its
+      // Canvas checkpoint is gone or finished, which makes the local record
+      // a leftover that must not block grading forever.
+      let doc: GradingRunDocument | null;
+      try {
+        doc = await clients.runStore.loadRun(rec.canvasCourseId, rec.runId, rec.apiDomain);
+      } catch {
+        refuse(rec.runId, rec.status); // can't check — the local record stands
       }
+      if (!doc) {
+        await this.forgetRun(rec.runId, 'its Canvas checkpoint no longer exists');
+        continue;
+      }
+      if (TERMINAL_RUN_STATUSES.includes(doc.status)) {
+        await this.forgetRun(rec.runId, `its Canvas checkpoint is already ${doc.status}`);
+        continue;
+      }
+      if (active.includes(doc.status)) refuse(rec.runId, doc.status);
     }
     try {
       const newest = (await clients.runStore.listRuns(courseId, apiDomain)).find(
@@ -1585,7 +1659,7 @@ export class GradingEngine {
         Number.isFinite(heartbeatMs) &&
         this.now().getTime() - heartbeatMs < RUN_LOCK_STALE_S * 1000
       ) {
-        refuse(doc.runId);
+        refuse(doc.runId, doc.status, { ownerName: doc.lock?.ownerName });
       }
     } catch (err) {
       if (err instanceof EngineError) throw err;

@@ -41,6 +41,8 @@ export interface ProgressStorePort {
   listLive(): Promise<RunProgressDoc[]>;
   /** Flips the cancelRequested flag (used by routes without a full write). */
   requestCancel(runId: string): Promise<void>;
+  /** Drops a record outright (its run no longer exists in Canvas). */
+  remove(runId: string): Promise<void>;
 }
 
 export interface LocalProgressStoreOptions {
@@ -96,6 +98,11 @@ export class LocalProgressStore implements ProgressStorePort {
     const doc = this.docs.get(runId);
     if (!doc) return;
     this.docs.set(runId, { ...doc, cancelRequested: true, updatedAt: new Date().toISOString() });
+    await this.maybePersist();
+  }
+
+  async remove(runId: string): Promise<void> {
+    if (!this.docs.delete(runId)) return;
     await this.maybePersist();
   }
 

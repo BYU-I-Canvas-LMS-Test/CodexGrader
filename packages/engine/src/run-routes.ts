@@ -157,7 +157,9 @@ function sendError(res: Response, err: unknown): void {
     return;
   }
   if (err instanceof EngineError) {
-    res.status(ENGINE_ERROR_STATUS[err.code]).json({ error: err.code, message: err.message });
+    res
+      .status(ENGINE_ERROR_STATUS[err.code])
+      .json({ ...err.details, error: err.code, message: err.message });
     return;
   }
   if (err instanceof CredentialError) {

@@ -167,15 +167,31 @@ describe('sweep', () => {
 
   it('contains per-run failures and sweeps the rest', async () => {
     const harness = buildEngine({});
-    // run1 has progress but NO checkpoint document → run_document_missing.
     harness.progressStore.docs.set('broken', makeProgressDoc({ runId: 'broken' }));
     seedAssignmentRun(harness, 'run1');
+    const loadRun = harness.runStore.loadRun.bind(harness.runStore);
+    harness.runStore.loadRun = async (courseId, runId) => {
+      if (runId === 'broken') throw new Error('Canvas is down (test-injected)');
+      return loadRun(courseId, runId);
+    };
 
     const report = await runSweep(harness);
     expect(report.errors).toHaveLength(1);
     expect(report.errors[0]).toMatchObject({ runId: 'broken' });
     expect(report.resumed).toEqual(['run1']);
+    expect(harness.progressStore.docs.has('broken')).toBe(true); // retried next sweep
     await shutdown(harness);
+  });
+
+  it('forgets a record whose Canvas checkpoint no longer exists', async () => {
+    const harness = buildEngine({});
+    harness.progressStore.docs.set('ghost', makeProgressDoc({ runId: 'ghost' }));
+
+    const report = await runSweep(harness);
+    expect(report.forgotten).toEqual(['ghost']);
+    expect(report.errors).toEqual([]);
+    expect(harness.progressStore.docs.has('ghost')).toBe(false);
+    expect((await runSweep(harness)).scanned).toBe(0);
   });
 
   it('terminal runs never enter the sweep', async () => {

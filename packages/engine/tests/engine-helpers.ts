@@ -117,6 +117,10 @@ export class FakeProgressStore implements ProgressStorePort {
     if (doc) doc.cancelRequested = true;
   }
 
+  async remove(runId: string): Promise<void> {
+    this.docs.delete(runId);
+  }
+
   get last(): RunProgressDoc {
     if (this.writes.length === 0) throw new Error('No progress writes recorded.');
     return this.writes[this.writes.length - 1]!;

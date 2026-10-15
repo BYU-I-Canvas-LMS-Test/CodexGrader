@@ -81,11 +81,17 @@ export function InfoBanner({
 
 /** Red-toned InfoBanner variant for errors (the ported views styled this
  * inline everywhere; centralized here). */
-export function ErrorBanner({ children }: { children: React.ReactNode }) {
+export function ErrorBanner({
+  children,
+  action,
+}: {
+  children: React.ReactNode;
+  action?: React.ReactNode;
+}) {
   return (
     <div
       className="info-banner"
-      style={{ borderColor: '#FCA5A5', background: 'var(--red-100)' }}
+      style={{ borderColor: '#FCA5A5', background: 'var(--red-100)', flexWrap: 'wrap' }}
     >
       <div className="left">
         <span className="icon" style={{ color: 'var(--red-600)' }}>
@@ -93,6 +99,7 @@ export function ErrorBanner({ children }: { children: React.ReactNode }) {
         </span>
         {children}
       </div>
+      {action}
     </div>
   );
 }

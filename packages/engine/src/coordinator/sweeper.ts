@@ -14,10 +14,12 @@
 //   - PostedAt idempotency inside reconcile means a sweep can never
 //     double-post.
 //   - Per-run failures are contained; one broken run never stops the sweep.
+//   - A record whose Canvas checkpoint no longer exists is forgotten — there
+//     is nothing to resume, and it would otherwise fail every sweep.
 
 import { RUN_LOCK_STALE_S } from '../progress/progress-writer.js';
 import type { ProgressStorePort } from '../progress/progress-writer.js';
-import type { GradingEngine } from './engine.js';
+import { EngineError, type GradingEngine } from './engine.js';
 import type { RunRegistry } from './registry.js';
 
 export interface SweepDeps {
@@ -34,6 +36,8 @@ export interface SweepReport {
   scanned: number;
   resumed: string[];
   finalizedCancelled: string[];
+  /** Local records dropped because their Canvas checkpoint is gone. */
+  forgotten: string[];
   skipped: Array<{ runId: string; reason: 'live_here' | 'fresh_heartbeat' | 'lock' }>;
   errors: Array<{ runId: string; message: string }>;
 }
@@ -48,6 +52,7 @@ export async function sweep(deps: SweepDeps): Promise<SweepReport> {
     scanned: 0,
     resumed: [],
     finalizedCancelled: [],
+    forgotten: [],
     skipped: [],
     errors: [],
   };
@@ -97,6 +102,13 @@ export async function sweep(deps: SweepDeps): Promise<SweepReport> {
           break;
       }
     } catch (err) {
+      if (err instanceof EngineError && err.code === 'run_document_missing') {
+        // Nothing left to resume (deleted, or removed with a course reset):
+        // drop the record instead of failing on it every few minutes.
+        await deps.engine.forgetRun(runId, 'its Canvas checkpoint no longer exists');
+        report.forgotten.push(runId);
+        continue;
+      }
       const message = err instanceof Error ? err.message : String(err);
       warn(`[sweeper] Run ${runId} sweep failed: ${message}`);
       report.errors.push({ runId, message });

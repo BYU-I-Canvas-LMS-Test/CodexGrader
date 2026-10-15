@@ -1,15 +1,16 @@
 // Run-level PAUSE classification. Some failures aren't the student's row's
 // fault and would hit every remaining row the same way — the teacher's Codex
-// usage limit, an expired Codex sign-in, or a Canvas token that stopped
-// working. Instead of marking every row ERROR, the engine PAUSES the run:
-// the row goes back to PENDING, queued items stop, and the run document says
-// why and how to fix it. Resuming (automatically when a usage window resets,
-// or when the teacher fixes the sign-in/token) continues from there — nothing
-// is lost and nothing is double-graded.
+// usage limit, Codex refusing requests for a few minutes (HTTP 429), an
+// expired Codex sign-in, or a Canvas token that stopped working. Instead of
+// marking every row ERROR, the engine PAUSES the run: the row goes back to
+// PENDING, queued items stop, and the run document says why and how to fix
+// it. Resuming (automatically when a usage window resets or a rate-limit
+// pause ends, or when the teacher fixes the sign-in/token) continues from
+// there — nothing is lost and nothing is double-graded.
 
 import { CanvasError } from '@aigrader/canvas';
 import type { PauseReason } from '@aigrader/shared';
-import { GradingCallError } from '../llm/structured-client.js';
+import { GradingCallError, RATE_LIMIT_PAUSE_MS } from '../llm/structured-client.js';
 
 export interface PauseSignal {
   reason: PauseReason;
@@ -27,8 +28,18 @@ export function pauseSignalOf(err: unknown): PauseSignal | null {
         reason: 'usage_limit',
         until: err.resetsAt,
         message: err.resetsAt
-          ? `Your Codex usage limit was reached. Grading pauses and continues automatically after ${err.resetsAt}.`
+          ? 'Your Codex usage limit was reached. Grading pauses and continues automatically when it resets.'
           : 'Your Codex usage limit was reached. Grading is paused; resume it once your limit resets.',
+      };
+    }
+    if (err.kind === 'rate_limited') {
+      // Stored as a usage-limit pause (pause reasons are a persisted enum —
+      // never extended): it lifts by itself at `until`, the same way.
+      return {
+        reason: 'usage_limit',
+        until: err.resetsAt ?? new Date(Date.now() + RATE_LIMIT_PAUSE_MS).toISOString(),
+        message:
+          'Codex is getting too many requests right now (HTTP 429 Too Many Requests). Grading paused for a few minutes and continues automatically; nothing is lost.',
       };
     }
     if (err.kind === 'auth') {

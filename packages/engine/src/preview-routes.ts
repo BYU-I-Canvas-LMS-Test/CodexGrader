@@ -53,6 +53,7 @@ import {
   csvDelimiterFor,
   isCsvLike,
   isHeicAttachment,
+  isPagesAttachment,
   safeInlineContentType,
 } from '@aigrader/shared/preview';
 import {
@@ -62,6 +63,7 @@ import {
   convertHeicToJpeg,
   convertRtfHtml,
   createColorResolver,
+  extractPages,
   isRtfAttachment,
   loadWorkbook,
   renderCsvGrid,
@@ -631,6 +633,9 @@ async function buildPreview(
         if (isRtfAttachment(attachment['content-type'], attachment.filename)) {
           return rtfPreview(bytes);
         }
+        if (isPagesAttachment(attachment['content-type'], attachment.filename)) {
+          return await pagesPreview(bytes);
+        }
         return {
           kind: 'unsupported',
           warnings: [],
@@ -649,6 +654,24 @@ async function docxPreview(bytes: Buffer): Promise<PreviewPayload> {
     return { kind: 'unsupported', warnings: result.warnings, error: result.error ?? CONVERT_FAILED_MESSAGE };
   }
   return { kind: 'rich-html', html: result.html, warnings: result.warnings };
+}
+
+/** Pages documents preview as their extracted text (the same text the AI
+ * grades); an unreadable one says why. */
+async function pagesPreview(bytes: Buffer): Promise<PreviewPayload> {
+  try {
+    const result = await extractPages(bytes);
+    if (result.text === '') {
+      return { kind: 'unsupported', warnings: [], error: result.warnings.join(' ') };
+    }
+    return { kind: 'text', plainText: result.text, warnings: result.warnings };
+  } catch (err) {
+    return {
+      kind: 'unsupported',
+      warnings: [],
+      error: err instanceof Error ? err.message : CONVERT_FAILED_MESSAGE,
+    };
+  }
 }
 
 function rtfPreview(bytes: Buffer): PreviewPayload {

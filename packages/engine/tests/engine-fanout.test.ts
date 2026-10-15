@@ -507,20 +507,27 @@ describe('cancel mid-run', () => {
     expect(await progressStore.listLive()).toHaveLength(0);
   });
 
-  it('cancelling a run whose process is gone just flags it for the resume sweep', async () => {
+  it('cancelling a run whose process is gone finishes it through resume', async () => {
     const harness = buildEngine({ canvas: assignmentCanvas() });
-    const { engine, registry, progressStore } = harness;
+    const { engine, progressStore, runStore } = harness;
     const { runId } = await engine.startRun({
       ...START_ARGS,
       target: { kind: 'assignment', assignmentId: 501 },
     });
     await engine.onIdle();
-    // Simulate the owner dying: unregister without terminal bookkeeping.
-    await registry.remove(runId);
+    // A fresh engine over the same stores: the owner process is gone.
+    await shutdown(harness);
+    const record = progressStore.docs.get(runId)!;
+    progressStore.docs.set(runId, { ...record, status: 'RUNNING' });
+    runStore.docs.get(runId)!.status = 'RUNNING';
+    runStore.docs.get(runId)!.lock = null;
+    const next = buildEngine({ canvas: assignmentCanvas(), runStore, progressStore });
 
-    const result = await engine.cancel(runId);
-    expect(result.status).toBe('flagged');
+    const result = await next.engine.cancel(runId);
+    expect(result.status).toBe('cancelled');
     expect(progressStore.docs.get(runId)!.cancelRequested).toBe(true);
+    expect(runStore.docs.get(runId)!.status).toBe('CANCELLED');
+    await shutdown(next);
   });
 });
 

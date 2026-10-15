@@ -8,6 +8,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   GradingCallError,
+  RATE_LIMIT_PAUSE_MS,
+  RATE_LIMIT_STAGGER_MS,
   StructuredGradingClient,
   type ModelCallFn,
   type ModelRequest,
@@ -44,6 +46,51 @@ function jsonResponse(body: unknown, usage?: ModelResponse['usage']): ModelRespo
 
 function httpError(status: number, message = `HTTP ${status}`): Error {
   return Object.assign(new Error(message), { status });
+}
+
+/** Virtual timers: sleeps queue up and fire in wake-time order, moving the
+ * clock to each one's wake time (concurrent sleepers stay independent). */
+function virtualTime() {
+  let t = 0;
+  const timers: Array<{ at: number; resolve: () => void }> = [];
+  const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+  return {
+    now: () => t,
+    sleep: (ms: number) => new Promise<void>((resolve) => timers.push({ at: t + ms, resolve })),
+    settle,
+    async runUntil(work: Promise<unknown>) {
+      let done = false;
+      void work.finally(() => {
+        done = true;
+      });
+      while (!done) {
+        await settle();
+        timers.sort((x, y) => x.at - y.at);
+        const next = timers.shift();
+        if (!next) continue;
+        t = Math.max(t, next.at);
+        next.resolve();
+      }
+      await work;
+    },
+  };
+}
+
+/** A clock that only moves when the client sleeps (cool-downs are exact). */
+function fakeClock() {
+  let t = 0;
+  const sleeps: number[] = [];
+  return {
+    sleeps,
+    now: () => t,
+    opts: {
+      now: () => t,
+      sleep: async (ms: number) => {
+        sleeps.push(ms);
+        t += ms;
+      },
+    } satisfies Partial<StructuredGradingClientOptions>,
+  };
 }
 
 function makeClient(fn: ModelCallFn, opts: Partial<StructuredGradingClientOptions> = {}) {
@@ -190,20 +237,76 @@ describe('gradeSubmission — zod repair retry', () => {
 });
 
 describe('gradeSubmission — transient retry policy', () => {
-  it('retries a 429 with backoff, then succeeds', async () => {
-    const sleeps: number[] = [];
+  it('waits out a 429 with a rate-limit cool-down (tens of seconds, not 1s), then succeeds', async () => {
+    const clock = fakeClock();
     const { fn, calls } = makeGenerate([httpError(429, 'rate limited'), jsonResponse(validOutput)]);
-    const client = makeClient(fn, {
-      sleep: async (ms) => {
-        sleeps.push(ms);
-      },
-    });
+    const client = makeClient(fn, clock.opts);
 
     const result = await client.gradeSubmission(submissionCall());
 
     expect(result.output).toEqual(validOutput);
     expect(calls).toHaveLength(2);
-    expect(sleeps).toEqual([1000]); // 1s * 2^0 + jitter(random()=0)
+    expect(clock.sleeps).toEqual([15_000]); // 15s * 2^0 + jitter(random()=0)
+  });
+
+  it('doubles the cool-down on consecutive 429s, then pauses the run as rate_limited', async () => {
+    const clock = fakeClock();
+    const { fn, calls } = makeGenerate([
+      httpError(429, 'exceeded retry limit, last status: 429 Too Many Requests'),
+      httpError(429),
+      httpError(429),
+      httpError(429),
+    ]);
+
+    const err = await makeClient(fn, clock.opts)
+      .gradeSubmission(submissionCall())
+      .then(() => null, (e: unknown) => e);
+
+    expect(calls).toHaveLength(4);
+    expect(clock.sleeps).toEqual([15_000, 30_000, 60_000]);
+    expect(err).toBeInstanceOf(GradingCallError);
+    const failure = err as GradingCallError;
+    expect(failure.kind).toBe('rate_limited');
+    expect(failure.retryable).toBe(true);
+    // The pause lifts by itself RATE_LIMIT_PAUSE_MS after the last refusal.
+    expect(Date.parse(failure.resetsAt!)).toBe(clock.now() + RATE_LIMIT_PAUSE_MS);
+  });
+
+  it('holds every concurrent call during a cool-down, then restarts them staggered', async () => {
+    const time = virtualTime();
+    const starts: number[] = [];
+    const fn: ModelCallFn = async () => {
+      starts.push(time.now());
+      if (starts.length === 1) throw httpError(429);
+      return jsonResponse(validOutput);
+    };
+    const client = makeClient(fn, { now: time.now, sleep: time.sleep });
+
+    // The first call trips the limit; two more arrive during the cool-down.
+    const a = client.gradeSubmission(submissionCall());
+    await time.settle();
+    const b = client.gradeSubmission(submissionCall());
+    const c = client.gradeSubmission(submissionCall());
+    await time.runUntil(Promise.all([a, b, c]));
+
+    // Nobody starts inside the 15s cool-down; the held calls restart spaced.
+    expect(starts).toEqual([0, 15_000, 15_000 + RATE_LIMIT_STAGGER_MS, 15_000 + 2 * RATE_LIMIT_STAGGER_MS]);
+  });
+
+  it('a cancel cuts a cool-down short', async () => {
+    const controller = new AbortController();
+    const fn: ModelCallFn = async () => {
+      throw httpError(429);
+    };
+    const client = makeClient(fn, {
+      // A cool-down that would never end on its own.
+      sleep: () => new Promise(() => {}),
+    });
+    const pending = client.gradeSubmission({ ...submissionCall(), signal: controller.signal });
+    setTimeout(() => controller.abort(), 10);
+    const err = await pending.then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(GradingCallError);
+    expect((err as GradingCallError).message).toContain('cancelled');
   });
 
   it('backs off exponentially across repeated 5xx, then succeeds', async () => {

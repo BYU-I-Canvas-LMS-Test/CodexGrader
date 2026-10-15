@@ -107,6 +107,10 @@ type RunDoc = {
   canvasQuizId: number | null;
   grades: StudentRow[];
   quizGrades: QuizRow[];
+  /** Set while grading is paused (Codex usage or rate limit, sign-in,
+   * Canvas token); pausedUntil when it continues by itself. */
+  pausedMessage?: string;
+  pausedUntil?: string;
 };
 
 type Progress = ProgressSample & {
@@ -434,9 +438,28 @@ function RunHeader({
   );
 }
 
+/** The run's pause, when grading is paused. */
+function pauseOf(run: RunDoc | null): { message: string; until: string | null } | null {
+  return run?.pausedMessage ? { message: run.pausedMessage, until: run.pausedUntil ?? null } : null;
+}
+
+/** "3:45 PM" today, "Thu, Oct 16, 9:00 AM" otherwise. */
+function formatResumeTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const today = d.toDateString() === new Date().toDateString();
+  return d.toLocaleString(
+    undefined,
+    today
+      ? { hour: 'numeric', minute: '2-digit' }
+      : { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' },
+  );
+}
+
 function RunBanners({
   status,
   stale,
+  paused,
   submitting,
   isStaff,
   cancelRun,
@@ -444,30 +467,46 @@ function RunBanners({
 }: {
   status: string;
   stale: boolean;
+  paused: { message: string; until: string | null } | null;
   submitting: boolean;
   isStaff: boolean;
   cancelRun: () => Promise<void>;
   resumeRun: () => Promise<void>;
 }) {
+  const resumeAt = paused?.until ? formatResumeTime(paused.until) : '';
   return (
     <>
       {isActiveRunStatus(status) ? (
         <div
           className="info-banner"
-          style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}
+          style={{
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: 16,
+            ...(paused ? { borderColor: '#FCD34D', background: 'var(--amber-50)' } : {}),
+          }}
         >
           <div className="left">
-            <span className="icon">
-              <I.Refresh w={18} h={18} />
+            <span className="icon" style={paused ? { color: 'var(--amber-600)' } : undefined}>
+              {paused ? <I.Warn w={18} h={18} /> : <I.Refresh w={18} h={18} />}
             </span>
-            {status === 'POSTING'
-              ? 'Approved grades are posting to Canvas — this updates live.'
-              : 'AI grading in progress — drafts appear below as they finish.'}
+            {paused
+              ? `Grading is paused. ${paused.message}${resumeAt ? ` Expected to continue around ${resumeAt}.` : ''}`
+              : status === 'POSTING'
+                ? 'Approved grades are posting to Canvas — this updates live.'
+                : 'AI grading in progress — drafts appear below as they finish.'}
           </div>
           {isStaff && status !== 'POSTING' ? (
-            <button className="btn btn-secondary" onClick={() => void cancelRun()} disabled={submitting}>
-              Cancel run
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {paused ? (
+                <button className="btn btn-primary" onClick={() => void resumeRun()} disabled={submitting}>
+                  Resume now
+                </button>
+              ) : null}
+              <button className="btn btn-secondary" onClick={() => void cancelRun()} disabled={submitting}>
+                Cancel run
+              </button>
+            </div>
           ) : null}
         </div>
       ) : null}
@@ -650,6 +689,7 @@ function AssignmentReview(props: SharedProps) {
       <RunBanners
         status={status}
         stale={stale}
+        paused={pauseOf(run)}
         submitting={submitting}
         isStaff={isStaff}
         cancelRun={props.cancelRun}
@@ -1224,6 +1264,7 @@ function QuizReview(props: SharedProps & { run: RunDoc }) {
       <RunBanners
         status={status}
         stale={stale}
+        paused={pauseOf(run)}
         submitting={submitting}
         isStaff={isStaff}
         cancelRun={props.cancelRun}

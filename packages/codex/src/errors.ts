@@ -8,8 +8,11 @@
 //   model unavailable  → kind 'model_unavailable' → the row errors
 //   policy refusal     → kind 'refusal' → the row errors: grade manually
 //   too large / 4xx    → non-retryable → the row errors
-//   network / 5xx /    → a plain error with `status` (or none) → the
-//   short rate limit     engine's transient retry (3 attempts, backoff)
+//   network / 5xx      → a plain error with `status` (or none) → the
+//                        engine's transient retry (3 attempts, backoff)
+//   short rate limit   → a plain error with status 429 → the engine's shared
+//   (429)                cool-down (15s, 30s, 60s), then a short run pause
+//                        that resumes itself
 //   tool use observed  → non-retryable (isolation must never be bypassed)
 //
 // Codex reports failures as event messages that often embed a JSON error
@@ -105,7 +108,11 @@ export function classifyFailure(input: {
   const texts = [...outcome.errors, run.stderr].filter((t) => t && t.trim());
   const parsed = outcome.errors.map(parseErrorMessage);
   const all = [...parsed.map((p) => `${p.type ?? ''} ${p.code ?? ''} ${p.message}`), run.stderr].join('\n');
-  const status = parsed.find((p) => p.status !== undefined)?.status;
+  // Codex's own retry give-up reads "exceeded retry limit, last status: 429
+  // Too Many Requests"; the words alone still mean 429.
+  const status =
+    parsed.find((p) => p.status !== undefined)?.status ??
+    (/too many requests/i.test(all) ? 429 : undefined);
   const resetsAt = parsed.find((p) => p.resetsAt)?.resetsAt;
   const summary = firstLine(parsed[0]?.message ?? texts[0] ?? `Codex exited with code ${run.exitCode ?? 'unknown'}.`);
 

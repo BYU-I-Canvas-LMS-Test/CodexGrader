@@ -149,6 +149,15 @@ describe('error classifier', () => {
     expect(info.kind).toBeUndefined();
   });
 
+  it("Codex's own retry give-up on 429 keeps status 429 (the engine's rate-limit cool-down)", () => {
+    const giveUp = classifyFailure({ run: run(), outcome: failed('exceeded retry limit, last status: 429 Too Many Requests') });
+    expect(giveUp).toMatchObject({ retryable: true, status: 429 });
+    expect(giveUp.kind).toBeUndefined();
+    expect(toThrowable(giveUp)).toMatchObject({ status: 429 });
+    const wordsOnly = classifyFailure({ run: run({ stderr: 'Error: Too Many Requests' }), outcome: parseExecEvents('') });
+    expect(wordsOnly).toMatchObject({ retryable: true, status: 429 });
+  });
+
   it('auth, refusal, too large, network, crash, timeout, missing binary, tool use', () => {
     expect(classifyFailure({ run: run(), outcome: failed('{"status":401,"error":{"message":"Please log in again."}}') }).kind).toBe('auth');
     expect(classifyFailure({ run: run(), outcome: failed('{"status":400,"error":{"message":"flagged under the cyber policy"}}') }).kind).toBe('refusal');

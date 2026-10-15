@@ -172,6 +172,8 @@ export {
   GradingCallError,
   LLM_CALL_TIMEOUT_MS,
   LLM_MAX_ATTEMPTS,
+  RATE_LIMIT_MAX_ATTEMPTS,
+  RATE_LIMIT_PAUSE_MS,
   type GradingFailureKind,
   type GradingLlm,
   type LlmResult,

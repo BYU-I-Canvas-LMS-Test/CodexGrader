@@ -211,6 +211,26 @@ describe('a grading call', () => {
     expect(calls().map((c) => c.scenario)).toEqual(['server_error', 'rate_limited', 'crash', 'success']);
   });
 
+  it('a 429 when a usage window has just filled pauses until its reset instead of cooling down', async () => {
+    process.env.FAKE_CODEX_SCENARIO = 'rate_limited,success';
+    const reset = new Date(Date.now() + 3_600_000).toISOString();
+    let reads = 0;
+    const b = backend({
+      // Under the line at the pre-call check; full when re-read after the 429.
+      usageReader: async () => ({
+        allowed: null,
+        windows: [{ name: 'primary', usedPercent: reads++ === 0 ? 40 : 97, windowMinutes: 300, resetsAt: reset }],
+        planType: null,
+        readAt: new Date().toISOString(),
+      }),
+    });
+    const err = (await grade(b).catch((e: unknown) => e)) as GradingCallError;
+    expect(err).toBeInstanceOf(GradingCallError);
+    expect(err.kind).toBe('usage_limit');
+    expect(err.resetsAt).toBe(reset);
+    expect(calls()).toHaveLength(1); // not retried into the wall
+  });
+
   it('an unparseable answer gets one repair retry', async () => {
     process.env.FAKE_CODEX_SCENARIO = 'invalid_json,success';
     await expect(grade(backend())).resolves.toMatchObject({ output: { TotalPoints: '18/20' } });

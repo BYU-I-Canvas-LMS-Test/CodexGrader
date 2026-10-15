@@ -24,6 +24,13 @@ export { extractDocx, type DocxExtractResult } from './docx.js';
 export { extractCsv, type CsvExtractResult } from './csv.js';
 export { extractPdf, SCANNED_PDF_WARNING, type PdfExtractResult } from './pdf.js';
 export { extractXlsx, loadWorkbook, formatCellValue, type XlsxExtractResult } from './xlsx.js';
+export {
+  extractPages,
+  PAGES_UNREADABLE,
+  PAGES_PASSWORD_PROTECTED,
+  PAGES_NO_TEXT,
+  type PagesExtractResult,
+} from './pages.js';
 
 // Extension lists (the submission viewer must classify with these — no
 // drift; the canonical copies live in @aigrader/shared/preview).
